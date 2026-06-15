@@ -1,0 +1,15 @@
+{
+  "name": "corum-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "desktop",
+    "web"
+  ],
+  "scripts": {
+    "dev:desktop": "npm run dev --workspace=desktop",
+    "dev:web": "npm run dev --workspace=web",
+    "desktop:dev:exe": "npm run tauri dev --workspace=desktop",
+    "desktop:build:exe": "npm run tauri build --workspace=desktop"
+  }
+}
