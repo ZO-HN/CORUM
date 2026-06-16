@@ -1,86 +1,19 @@
 -- =====================================================================
--- KKSync: SK Youth Information System - Supabase Relational Database Schema
--- Migration Date: 2026-05-29 (Consolidated Schema Setup)
--- Description: Sets up normalized tables, triggers, Row-Level Security,
---              performance indexes, system configurations, and RPC helpers.
+-- KKSync: Desktop Admin Client Schema Setup
+-- Migration Date: 2026-05-29 (Part 1)
+-- Description: Sets up tables, triggers, and RPCs used by the desktop
+--              admin client (programs, attendance, documents, logs).
 -- =====================================================================
 
--- Drop existing tables to ensure schema is fully created fresh without conflicts
-DROP TABLE IF EXISTS public.system_config CASCADE;
+-- Drop existing tables to ensure schema is created fresh without conflicts
 DROP TABLE IF EXISTS public.audit_logs CASCADE;
 DROP TABLE IF EXISTS public.documents CASCADE;
 DROP TABLE IF EXISTS public.announcements CASCADE;
-DROP TABLE IF EXISTS public.registration_submissions CASCADE;
 DROP TABLE IF EXISTS public.attendance CASCADE;
 DROP TABLE IF EXISTS public.programs CASCADE;
-DROP TABLE IF EXISTS public.youth_profiles CASCADE;
-DROP TABLE IF EXISTS public.user_roles CASCADE;
-
--- Enable required extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ---------------------------------------------------------------------
--- 1. Table: user_roles (Extends Supabase auth.users)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.user_roles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    role VARCHAR(50) NOT NULL CHECK (role IN ('admin', 'staff', 'resident')),
-    display_name VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
-
--- ---------------------------------------------------------------------
--- 2. Table: youth_profiles
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.youth_profiles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    first_name VARCHAR(100) NOT NULL,
-    last_name VARCHAR(100) NOT NULL,
-    middle_name VARCHAR(100),
-    age INT NOT NULL CHECK (age >= 15 AND age <= 30),
-    gender VARCHAR(50) CHECK (gender IN ('Male', 'Female', 'LGBTQIA+', 'Unlabeled')),
-    date_of_birth DATE NOT NULL,
-    civil_status VARCHAR(50) DEFAULT 'Single' CHECK (civil_status IN ('Single', 'Married', 'Widowed')),
-    blood_type VARCHAR(10) DEFAULT 'O+',
-    nationality VARCHAR(100) DEFAULT 'Filipino',
-    contact_number VARCHAR(30),
-    email VARCHAR(150) UNIQUE CHECK (email IS NULL OR position('@' in email) > 0),
-    additional_email VARCHAR(150),
-    home_address TEXT NOT NULL,
-    purok VARCHAR(50) NOT NULL,
-    is_registered_voter BOOLEAN DEFAULT FALSE,
-    precinct_number VARCHAR(50),
-    education_level TEXT,
-    scholarship_status VARCHAR(100) DEFAULT 'None',
-    youth_classification VARCHAR(100),
-    work_status VARCHAR(100),
-    work_specify TEXT,
-    education_background VARCHAR(100),
-    education_specify TEXT,
-    has_scholarship VARCHAR(50),
-    scholarship_specify TEXT,
-    participated_last_kk_election VARCHAR(50),
-    attended_kk_assembly VARCHAR(50),
-    kk_assembly_count INT,
-    skills TEXT[] DEFAULT '{}',
-    facebook_link TEXT,
-    profile_picture_url TEXT,
-    status VARCHAR(50) DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive', 'Archived')),
-    joined_date DATE DEFAULT CURRENT_DATE,
-    otp_code VARCHAR(6),
-    educational_status VARCHAR(100),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.youth_profiles ENABLE ROW LEVEL SECURITY;
-
--- ---------------------------------------------------------------------
--- 3. Table: programs (SK Events & Projects)
+-- 1. Table: programs (SK Events & Projects)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.programs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -97,7 +30,7 @@ CREATE TABLE IF NOT EXISTS public.programs (
 ALTER TABLE public.programs ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
--- 4. Table: attendance (Simulated & QR Check-ins)
+-- 2. Table: attendance (Simulated & QR Check-ins)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.attendance (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -113,30 +46,7 @@ CREATE TABLE IF NOT EXISTS public.attendance (
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
--- 5. Table: registration_submissions (Web Registry Requests)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.registration_submissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    form_data JSONB NOT NULL,
-    status VARCHAR(50) DEFAULT 'Pending' CHECK (status IN ('Pending', 'Approved', 'Rejected')),
-    reviewer_notes TEXT,
-    reviewed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    CONSTRAINT check_submission_form_data CHECK (
-        jsonb_typeof(form_data->'email') = 'string' AND
-        position('@' in (form_data->>'email')) > 0 AND
-        jsonb_typeof(form_data->'firstName') = 'string' AND
-        jsonb_typeof(form_data->'lastName') = 'string' AND
-        (form_data->>'age')::int >= 15 AND 
-        (form_data->>'age')::int <= 30
-    )
-);
-
-ALTER TABLE public.registration_submissions ENABLE ROW LEVEL SECURITY;
-
--- ---------------------------------------------------------------------
--- 6. Table: announcements
+-- 3. Table: announcements
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.announcements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -150,7 +60,7 @@ CREATE TABLE IF NOT EXISTS public.announcements (
 ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
--- 7. Table: documents
+-- 4. Table: documents
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -164,7 +74,7 @@ CREATE TABLE IF NOT EXISTS public.documents (
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
--- 8. Table: audit_logs (System Activity Logging)
+-- 5. Table: audit_logs (System Activity Logging)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -179,88 +89,27 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
--- 9. Table: system_config (Barangay Details & Structure)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.system_config (
-    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    barangay_name VARCHAR(255) DEFAULT 'San Antonio',
-    barangay_logo TEXT,
-    sk_chairperson VARCHAR(255) DEFAULT 'Hon. Jane Doe',
-    puroks VARCHAR(255)[] DEFAULT '{}',
-    sk_kagawads VARCHAR(255)[] DEFAULT '{}',
-    sk_treasurer VARCHAR(255),
-    sk_secretary VARCHAR(255),
-    district VARCHAR(255) DEFAULT 'District I',
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-
-ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
-
--- ---------------------------------------------------------------------
 -- PERFORMANCE INDEXING
 -- ---------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_purok ON public.youth_profiles (status, purok);
-CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_gender ON public.youth_profiles (status, gender);
-CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_age ON public.youth_profiles (status, age);
-CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_work ON public.youth_profiles (status, work_status);
-CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_education ON public.youth_profiles (status, education_level);
 CREATE INDEX IF NOT EXISTS idx_attendance_program_status ON public.attendance (program_id, status);
 CREATE INDEX IF NOT EXISTS idx_attendance_youth_id ON public.attendance (youth_id);
-CREATE INDEX IF NOT EXISTS idx_registration_submissions_status ON public.registration_submissions (status);
-
--- ---------------------------------------------------------------------
--- ROLE VERIFICATION HELPER (Avoids RLS Infinite Recursion)
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.check_user_role(p_user_id UUID, p_roles VARCHAR[])
-RETURNS BOOLEAN AS $$
-BEGIN
-    RETURN EXISTS (
-        SELECT 1 FROM public.user_roles
-        WHERE id = p_user_id
-        AND role = ANY(p_roles)
-    );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ---------------------------------------------------------------------
 -- ROW-LEVEL SECURITY POLICIES
 -- ---------------------------------------------------------------------
 
--- A. YOUTH_PROFILES
-CREATE POLICY "yp_admins_full_access" ON public.youth_profiles FOR ALL TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['admin'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin']));
-
-CREATE POLICY "yp_staff_select" ON public.youth_profiles FOR SELECT TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['staff']));
-
-CREATE POLICY "yp_staff_update" ON public.youth_profiles FOR UPDATE TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['staff']));
-
-CREATE POLICY "yp_staff_insert" ON public.youth_profiles FOR INSERT TO authenticated
-    WITH CHECK (public.check_user_role(auth.uid(), ARRAY['staff']));
-
-CREATE POLICY "yp_residents_own_select" ON public.youth_profiles FOR SELECT TO authenticated
-    USING (user_id = auth.uid());
-
--- B. PROGRAMS
+-- A. PROGRAMS
 CREATE POLICY "prog_admins_staff_full" ON public.programs FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "prog_authenticated_select" ON public.programs FOR SELECT TO authenticated
     USING (true);
 
--- C. ATTENDANCE
+-- B. ATTENDANCE
 CREATE POLICY "att_admins_staff_full" ON public.attendance FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
--- D. REGISTRATION_SUBMISSIONS
-CREATE POLICY "rs_anon_insert" ON public.registration_submissions FOR INSERT TO anon
-    WITH CHECK (true);
-
-CREATE POLICY "rs_admins_staff_full" ON public.registration_submissions FOR ALL TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
-
--- E. AUDIT_LOGS
+-- C. AUDIT_LOGS
 CREATE POLICY "al_admins_select" ON public.audit_logs FOR SELECT TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin']));
 
@@ -270,61 +119,29 @@ CREATE POLICY "al_allow_admin_staff_insert" ON public.audit_logs FOR INSERT TO a
 CREATE POLICY "al_deny_client_update" ON public.audit_logs FOR UPDATE TO authenticated USING (false);
 CREATE POLICY "al_deny_client_delete" ON public.audit_logs FOR DELETE TO authenticated USING (false);
 
--- F. ANNOUNCEMENTS
+-- D. ANNOUNCEMENTS
 CREATE POLICY "ann_admins_staff_full" ON public.announcements FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "ann_authenticated_select" ON public.announcements FOR SELECT TO authenticated
     USING (true);
 
--- G. DOCUMENTS
+-- E. DOCUMENTS
 CREATE POLICY "doc_admins_staff_full" ON public.documents FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "doc_residents_own_select" ON public.documents FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.youth_profiles WHERE public.youth_profiles.id = public.documents.youth_id AND public.youth_profiles.user_id = auth.uid()));
 
--- H. USER_ROLES
-CREATE POLICY "ur_admins_full" ON public.user_roles FOR ALL TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['admin'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin']));
-
-CREATE POLICY "ur_own_select" ON public.user_roles FOR SELECT TO authenticated
-    USING (id = auth.uid());
-
--- I. SYSTEM_CONFIG
-CREATE POLICY "sys_config_admins_staff_full" ON public.system_config FOR ALL TO authenticated
-    USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
-
-CREATE POLICY "sys_config_authenticated_select" ON public.system_config FOR SELECT TO authenticated
-    USING (true);
-
 -- Revoke direct table grants from the anon role
-REVOKE SELECT ON public.youth_profiles        FROM anon;
 REVOKE SELECT ON public.audit_logs            FROM anon;
-REVOKE SELECT ON public.user_roles            FROM anon;
 REVOKE SELECT ON public.attendance            FROM anon;
 REVOKE SELECT ON public.documents             FROM anon;
-REVOKE SELECT ON public.registration_submissions FROM anon;
-REVOKE SELECT ON public.system_config         FROM anon;
-
-GRANT INSERT ON public.registration_submissions TO anon;
 
 -- ---------------------------------------------------------------------
 -- AUTOMATED TRIGGERS & FUNCTIONS
 -- ---------------------------------------------------------------------
-
--- Trigger function to auto-update updated_at on record changes
-CREATE OR REPLACE FUNCTION public.update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = timezone('utc'::text, now());
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER set_updated_at_youth_profiles BEFORE UPDATE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER set_updated_at_programs BEFORE UPDATE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-CREATE TRIGGER set_updated_at_registration_submissions BEFORE UPDATE ON public.registration_submissions FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- Audit logging trigger function
 CREATE OR REPLACE FUNCTION public.process_audit_logging()
@@ -349,130 +166,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE TRIGGER audit_youth_profiles_trigger AFTER INSERT OR UPDATE OR DELETE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_programs_trigger AFTER INSERT OR UPDATE OR DELETE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
-CREATE TRIGGER audit_registration_submissions_trigger AFTER INSERT OR UPDATE OR DELETE ON public.registration_submissions FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_documents_trigger AFTER INSERT OR UPDATE OR DELETE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_attendance_trigger AFTER INSERT OR UPDATE OR DELETE ON public.attendance FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
-
--- ---------------------------------------------------------------------
--- RESIDENT ACCESS VERIFICATION RPC
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.verify_resident_access(p_email TEXT, p_passcode TEXT)
-RETURNS JSONB AS $$
-DECLARE
-    v_profile RECORD;
-    v_submission RECORD;
-    v_expected_passcode TEXT;
-BEGIN
-    -- 1. Try to find in youth_profiles
-    SELECT * INTO v_profile FROM public.youth_profiles WHERE LOWER(email) = LOWER(p_email) LIMIT 1;
-    IF FOUND THEN
-        v_expected_passcode := to_char(v_profile.date_of_birth, 'MMDDYYYY');
-        IF p_passcode = v_expected_passcode OR (v_profile.otp_code IS NOT NULL AND p_passcode = v_profile.otp_code) THEN
-            RETURN jsonb_build_object(
-                'type', 'synced_profile',
-                'profile', row_to_json(v_profile)::jsonb
-            );
-        END IF;
-    END IF;
-
-    -- 2. Try to find in registration_submissions
-    SELECT * INTO v_submission FROM public.registration_submissions WHERE LOWER(form_data->>'email') = LOWER(p_email) LIMIT 1;
-    IF FOUND THEN
-        v_expected_passcode := to_char(to_date(v_submission.form_data->>'dob', 'YYYY-MM-DD'), 'MMDDYYYY');
-        IF p_passcode = v_expected_passcode THEN
-            RETURN jsonb_build_object(
-                'type', 'pending_submission',
-                'submission', row_to_json(v_submission)::jsonb
-            );
-        END IF;
-    END IF;
-
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ---------------------------------------------------------------------
--- AUTOMATED USER CREATION TRIGGER FOR USER ROLES
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_has_users BOOLEAN;
-    v_display_name TEXT;
-BEGIN
-    v_display_name := COALESCE(
-        new.raw_user_meta_data->>'full_name',
-        new.raw_user_meta_data->>'name',
-        split_part(new.email, '@', 1)
-    );
-
-    SELECT EXISTS (SELECT 1 FROM public.user_roles) INTO v_has_users;
-    IF v_has_users THEN
-        INSERT INTO public.user_roles (id, role, display_name) VALUES (new.id, 'staff', v_display_name);
-    ELSE
-        INSERT INTO public.user_roles (id, role, display_name) VALUES (new.id, 'admin', v_display_name);
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE OR REPLACE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- ---------------------------------------------------------------------
--- SAFEGUARD TO PREVENT LOCKING OUT THE LAST SYSTEM ADMINISTRATOR
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.prevent_last_admin_lockout()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF (TG_OP = 'DELETE' AND OLD.role = 'admin') OR (TG_OP = 'UPDATE' AND OLD.role = 'admin' AND NEW.role != 'admin') THEN
-        IF (SELECT COUNT(*) FROM public.user_roles WHERE role = 'admin') <= 1 THEN
-            RAISE EXCEPTION 'Operation aborted. The system must have at least one active administrator.';
-        END IF;
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE TRIGGER enforce_admin_presence
-    BEFORE UPDATE OR DELETE ON public.user_roles
-    FOR EACH ROW EXECUTE FUNCTION public.prevent_last_admin_lockout();
-
--- ---------------------------------------------------------------------
--- SECURE RESIDENT CONTACT UPDATE WORKFLOW RPC
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.update_resident_contacts(
-    p_id UUID,
-    p_email TEXT,
-    p_passcode TEXT,
-    p_new_phone TEXT,
-    p_new_email TEXT
-)
-RETURNS BOOLEAN AS $$
-DECLARE
-    v_expected_passcode TEXT;
-    v_dob DATE;
-    v_email VARCHAR(150);
-BEGIN
-    SELECT date_of_birth, email INTO v_dob, v_email FROM public.youth_profiles WHERE id = p_id;
-    IF NOT FOUND THEN
-        RETURN FALSE;
-    END IF;
-
-    v_expected_passcode := to_char(v_dob, 'MMDDYYYY');
-    IF p_passcode != v_expected_passcode OR LOWER(v_email) != LOWER(p_email) THEN
-        RETURN FALSE;
-    END IF;
-
-    UPDATE public.youth_profiles
-    SET contact_number = p_new_phone,
-        additional_email = p_new_email
-    WHERE id = p_id;
-
-    RETURN TRUE;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ---------------------------------------------------------------------
 -- COMPREHENSIVE DASHBOARD SUMMARY & ANALYTICS DATA RPC
@@ -657,19 +352,6 @@ RETURNS UUID AS $$
 DECLARE
     v_user_id UUID;
     v_name TEXT;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
--- Wait, let's complete the body of create_system_user below:
-CREATE OR REPLACE FUNCTION public.create_system_user(
-    p_email TEXT,
-    p_password TEXT,
-    p_role TEXT,
-    p_display_name TEXT DEFAULT NULL
-)
-RETURNS UUID AS $$
-DECLARE
-    v_user_id UUID;
-    v_name TEXT;
 BEGIN
     IF NOT public.check_user_role(auth.uid(), ARRAY['admin']) THEN
         RAISE EXCEPTION 'Access Denied: Only administrators can create system users.';
@@ -743,21 +425,3 @@ SET display_name = COALESCE(
 )
 FROM auth.users u
 WHERE r.id = u.id AND r.display_name IS NULL;
-
--- ---------------------------------------------------------------------
--- SEED DATA (System Configuration)
--- ---------------------------------------------------------------------
-INSERT INTO public.system_config (
-    id, barangay_name, sk_chairperson, puroks, sk_kagawads, sk_treasurer, sk_secretary, district, updated_at
-) 
-VALUES (
-    1, 'San Antonio', 'Hon. Jane Doe', 
-    ARRAY['East', 'West A', 'West B', 'Holy Cross Drive', 'Special Block', 'Belisario', 'Ibula', 'Puting Lupa', 'Ruiz', 'Sto. Niño A', 'Sto. Niño B', 'Freedom', 'Fatima', 'San Vicente', 'Green Village', 'Gosi Blaza'], 
-    ARRAY['Kagawad 1', 'Kagawad 2', 'Kagawad 3', 'Kagawad 4', 'Kagawad 5', 'Kagawad 6', 'Kagawad 7'], 
-    'Treasurer', 'Secretary', 'District I', now()
-)
-ON CONFLICT (id) DO UPDATE 
-SET 
-    puroks = COALESCE(NULLIF(public.system_config.puroks, '{}'::VARCHAR[]), ARRAY['East', 'West A', 'West B', 'Holy Cross Drive', 'Special Block', 'Belisario', 'Ibula', 'Puting Lupa', 'Ruiz', 'Sto. Niño A', 'Sto. Niño B', 'Freedom', 'Fatima', 'San Vicente', 'Green Village', 'Gosi Blaza']),
-    sk_kagawads = COALESCE(NULLIF(public.system_config.sk_kagawads, '{}'::VARCHAR[]), ARRAY['Kagawad 1', 'Kagawad 2', 'Kagawad 3', 'Kagawad 4', 'Kagawad 5', 'Kagawad 6', 'Kagawad 7']),
-    updated_at = now();
