@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getSecureCache, setSecureCache } from './secureCache';
 import { enqueueMutation } from './offlineSync';
 
-// --- TS Interfaces matching our Supabase Schema ---
+// types representing supabase schema
 export interface YouthProfile {
   id: string;
   firstName: string;
@@ -101,7 +101,7 @@ export interface RegistrationSubmission {
   updatedAt?: string;
 }
 
-// --- Initial Mock Seeds ---
+// initial mock seeds
 const initialYouthProfiles: YouthProfile[] = [
   {
     id: "YTH-2024-0892",
@@ -290,7 +290,7 @@ const initialSubmissions: RegistrationSubmission[] = [
   }
 ];
 
-// --- Environment Variables Setup ---
+// env credentials config
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -300,8 +300,7 @@ export const supabase = isSupabaseConfigured
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
-// Helper to initialize encrypted LocalStorage persistent layers if offline
-// NOTE: These helpers are async to support AES-GCM encryption at rest.
+// persistence helpers using aes-gcm encryption
 const getLocalData = async <T>(key: string, initialData: T[]): Promise<T[]> => {
   const data = await getSecureCache<T[]>(key, []);
   if (!data || data.length === 0) {
@@ -315,7 +314,7 @@ const setLocalData = async <T>(key: string, data: T[]): Promise<void> => {
   await setSecureCache(key, data);
 };
 
-// --- DATA LAYER API ---
+// data layer methods
 
 export const getProfiles = async (): Promise<YouthProfile[]> => {
   if (isSupabaseConfigured && supabase) {
@@ -334,7 +333,7 @@ export const getProfiles = async (): Promise<YouthProfile[]> => {
     const totalProgramsCount = activeOrCompletedPrograms.length;
     const attendanceRecords = attendanceRes.data || [];
     
-    // Map database snake_case to React camelCase
+      // convert snake_case to camelCase
     return (profilesRes.data || []).map(p => {
       const youthPresentCount = attendanceRecords.filter(
         a => a.youth_id === p.id && a.status === 'Present'
@@ -399,7 +398,7 @@ export const getProfiles = async (): Promise<YouthProfile[]> => {
     });
   }
 
-  // Offline fallback: data is encrypted at rest via secureCache
+  // offline fallback using secure cache
   return await getLocalData<YouthProfile>('kk_youth_profiles', initialYouthProfiles);
 };
 
@@ -818,7 +817,7 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
     }
   }
 
-  // Local Storage Fallback (Offline/Mock)
+  // local storage fallback
   const formatDobToPasscode = (dobStr: string): string => {
     if (!dobStr) return '';
     const parts = dobStr.split('-');

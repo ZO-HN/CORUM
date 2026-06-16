@@ -1,11 +1,5 @@
-/**
- * offlineSync.ts
- * ──────────────────────────────────────────────────────────────────────────
- * Core offline synchronization engine for KKSync.
- * Manages an encrypted mutation queue, implements Last-Write-Wins (LWW) policy,
- * and processes mutations sequentially with a small delay to avoid rate-limiting.
- * ──────────────────────────────────────────────────────────────────────────
- */
+// syncs offline changes back to supabase.
+// processes mutations in order with a small delay to avoid rate limits.
 
 import { createClient } from '@supabase/supabase-js';
 import { getSecureCache, setSecureCache } from './secureCache';
@@ -29,7 +23,7 @@ export interface OfflineMutation {
   retries: number;
 }
 
-// Reactive state representation
+// state for sync queue and status
 let currentQueue: OfflineMutation[] = [];
 let currentIsSyncing = false;
 
@@ -50,9 +44,7 @@ function notifyListeners() {
   }
 }
 
-/**
- * Enqueue a mutation to the offline queue
- */
+// queue up local changes to sync later
 export async function enqueueMutation(
   operation: 'INSERT' | 'UPDATE',
   table: OfflineMutation['table'],
@@ -71,43 +63,33 @@ export async function enqueueMutation(
     retries: 0,
   };
 
-  // Add to in-memory queue
   currentQueue.push(newMutation);
   await setSecureCache('kk_offline_queue', currentQueue);
   notifyListeners();
 
-  // Attempt to sync immediately if online
+  // try syncing immediately if online
   if (navigator.onLine) {
     syncOfflineQueue();
   }
 }
 
-/**
- * Get the current sync queue items
- */
+// get all pending queue items
 export function getOfflineQueue(): OfflineMutation[] {
   return currentQueue;
 }
 
-/**
- * Get syncing state
- */
 export function isSyncingNow(): boolean {
   return currentIsSyncing;
 }
 
-/**
- * Clear the offline queue (e.g. on logout)
- */
+// wipe the queue (like when logging out)
 export async function clearOfflineQueue(): Promise<void> {
   currentQueue = [];
   await setSecureCache('kk_offline_queue', []);
   notifyListeners();
 }
 
-/**
- * Main loop: sequentially sync queue items with a 150ms delay
- */
+// sync loop to process queue items sequentially
 export async function syncOfflineQueue(): Promise<void> {
   if (currentIsSyncing) return;
   if (!navigator.onLine || !supabase) return;
@@ -116,13 +98,13 @@ export async function syncOfflineQueue(): Promise<void> {
   notifyListeners();
 
   try {
-    // Reload queue from secure cache
+    // reload queue from cache
     currentQueue = await getSecureCache<OfflineMutation[]>('kk_offline_queue', []);
 
     let index = 0;
     while (index < currentQueue.length) {
       if (!navigator.onLine) {
-        break; // Abort sync if connection is lost
+        break; // stop if we gone offline
       }
 
       const item = currentQueue[index];
@@ -137,13 +119,11 @@ export async function syncOfflineQueue(): Promise<void> {
       }
 
       if (success) {
-        // Remove from queue
         currentQueue.splice(index, 1);
         await setSecureCache('kk_offline_queue', currentQueue);
         notifyListeners();
       } else {
         if (shouldRetry) {
-          // Increment retries
           item.retries = (item.retries || 0) + 1;
           if (item.retries > 3) {
             console.error(`Sync queue item ${item.id} exceeded max retries. Discarding.`);
@@ -152,20 +132,19 @@ export async function syncOfflineQueue(): Promise<void> {
             await saveSyncFailureAuditLog(item);
             notifyListeners();
           } else {
-            // Update queue in cache with new retry count
             await setSecureCache('kk_offline_queue', currentQueue);
             notifyListeners();
-            break; // Stop execution on network error to prevent loop lock
+            break; // stop sync on network error
           }
         } else {
-          // Non-retryable error (e.g. LWW discarded or validation error). Discard it.
+          // bad error or discarded by lww, just drop it
           currentQueue.splice(index, 1);
           await setSecureCache('kk_offline_queue', currentQueue);
           notifyListeners();
         }
       }
 
-      // Small sequential delay to avoid API rate limiting
+      // pace requests to avoid hitting rate limits
       if (currentQueue.length > 0) {
         await new Promise(resolve => setTimeout(resolve, 150));
       }
@@ -176,15 +155,13 @@ export async function syncOfflineQueue(): Promise<void> {
   }
 }
 
-/**
- * Process a single queue item with Last-Write-Wins checks
- */
+// process a single queue item with last-write-wins conflict checks
 async function processQueueItem(item: OfflineMutation): Promise<boolean> {
   if (!supabase) return false;
 
   const { table, operation, recordId, payload, localUpdatedAt } = item;
 
-  // 1. Fetch remote record's updated_at (if it exists)
+  // fetch remote record's updated time to check for conflicts
   const { data: remoteData, error: fetchError } = await supabase
     .from(table)
     .select('*')
@@ -193,10 +170,10 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
 
   if (fetchError) {
     console.error(`Fetch error during sync for ${table}/${recordId}:`, fetchError);
-    throw fetchError; // Throw so that it gets retried
+    throw fetchError; // trigger retry
   }
 
-  // 2. Conflict check (Last-Write-Wins)
+  // check if remote has newer updates
   if (remoteData && remoteData.updated_at) {
     const remoteTime = new Date(remoteData.updated_at).getTime();
     const localTime = new Date(localUpdatedAt).getTime();
@@ -204,14 +181,13 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
     if (localTime < remoteTime) {
       console.warn(`LWW Conflict: Remote record in ${table} (${recordId}) is newer (${remoteData.updated_at}) than local update (${localUpdatedAt}). Discarding local update.`);
       await updateLocalRecord(table, recordId, remoteData);
-      return true; // Return true to mark as processed and discard item
+      return true; // discard and mark done
     }
   }
 
-  // 3. Perform write mutation
   if (operation === 'INSERT') {
     if (remoteData) {
-      // Record exists on remote and local update is newer. Perform update.
+      // remote exists but local is newer, so update it
       const { error: updateError } = await supabase
         .from(table)
         .update({ ...payload, updated_at: localUpdatedAt })
@@ -223,7 +199,6 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         return false;
       }
     } else {
-      // Insert new record
       const insertPayload = { ...payload };
       const isMockId = recordId.startsWith('PROG-') || recordId.startsWith('SUB-');
       if (isMockId) {
@@ -245,14 +220,14 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         return false;
       }
 
-      // If the ID was a mock ID, Supabase generated a real UUID. Replace the mock ID locally.
+      // replace temp id with real uuid from supabase
       if (insertedData && isMockId) {
         await replaceLocalMockId(table, recordId, insertedData);
       }
     }
   } else if (operation === 'UPDATE') {
     if (!remoteData) {
-      // Record does not exist on remote. Upsert it as an insert.
+      // remote record missing, so insert it instead
       const insertPayload = { ...payload };
       const isMockId = recordId.startsWith('PROG-') || recordId.startsWith('SUB-');
       if (isMockId) {
@@ -278,7 +253,6 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         await replaceLocalMockId(table, recordId, insertedData);
       }
     } else {
-      // Normal update
       const { error: updateError } = await supabase
         .from(table)
         .update({ ...payload, updated_at: localUpdatedAt })
@@ -295,9 +269,7 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
   return true;
 }
 
-/**
- * Check if the error is transient (network / rate limits)
- */
+// check if it's a transient network or rate limit error
 function isTransientError(error: any): boolean {
   if (!error) return false;
   const status = error.status || (error.code ? parseInt(error.code) : null);
@@ -307,9 +279,7 @@ function isTransientError(error: any): boolean {
   return false;
 }
 
-/**
- * Mapper: DB snake_case to Client camelCase for YouthProfile
- */
+// map db snake_case to client camelCase
 function mapDbProfileToClient(p: any): any {
   return {
     id: p.id,
@@ -352,9 +322,7 @@ function mapDbProfileToClient(p: any): any {
   };
 }
 
-/**
- * Mapper: DB snake_case to Client camelCase for Program
- */
+// map db program format to client
 function mapDbProgramToClient(p: any): any {
   return {
     id: p.id,
@@ -370,9 +338,7 @@ function mapDbProgramToClient(p: any): any {
   };
 }
 
-/**
- * Mapper: DB snake_case to Client camelCase for RegistrationSubmission
- */
+// map db submission format to client
 function mapDbSubmissionToClient(s: any): any {
   return {
     id: s.id,
@@ -383,9 +349,7 @@ function mapDbSubmissionToClient(s: any): any {
   };
 }
 
-/**
- * Update the local record with the remote record data
- */
+// update local cached record with remote data
 async function updateLocalRecord(table: string, recordId: string, remoteRecord: any) {
   let cacheKey = '';
   let mapper: (item: any) => any;
@@ -411,9 +375,7 @@ async function updateLocalRecord(table: string, recordId: string, remoteRecord: 
   }
 }
 
-/**
- * Replace local record with mock ID with synced database record containing new UUID
- */
+// replace mock temp id with actual uuid in local cache
 async function replaceLocalMockId(table: string, mockId: string, remoteRecord: any) {
   let cacheKey = '';
   let mapper: (item: any) => any;
@@ -436,9 +398,7 @@ async function replaceLocalMockId(table: string, mockId: string, remoteRecord: a
   }
 }
 
-/**
- * Log a sync failure audit log locally
- */
+// log sync failure in local audit trail
 async function saveSyncFailureAuditLog(item: OfflineMutation) {
   const logs = await getSecureCache<any[]>('kk_audit_logs', []);
   const fullLog = {
@@ -459,9 +419,7 @@ async function saveSyncFailureAuditLog(item: OfflineMutation) {
   await setSecureCache('kk_audit_logs', logs);
 }
 
-/**
- * Load queue from secure cache on launch
- */
+// bootstrap sync engine
 export async function initializeSyncEngine() {
   currentQueue = await getSecureCache<OfflineMutation[]>('kk_offline_queue', []);
   notifyListeners();
@@ -473,7 +431,6 @@ export async function initializeSyncEngine() {
   }
 }
 
-// Run initial load
 if (typeof window !== 'undefined') {
   initializeSyncEngine();
 }

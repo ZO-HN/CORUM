@@ -20,7 +20,7 @@ export function useNetworkStatus() {
     };
   }, []);
 
-  // Compute derived status text matching UI specifications
+  // status text for the ui
   let statusText = 'Connected';
   if (!isOnline) {
     statusText = 'Working Offline';

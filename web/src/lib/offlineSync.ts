@@ -1,11 +1,5 @@
-/**
- * offlineSync.ts (Web App)
- * ──────────────────────────────────────────────────────────────────────────
- * Core offline synchronization engine for KKSync Web App.
- * Manages an encrypted mutation queue, implements Last-Write-Wins (LWW) policy,
- * and processes mutations sequentially with a small delay to avoid rate-limiting.
- * ──────────────────────────────────────────────────────────────────────────
- */
+// syncs offline changes back to supabase.
+// processes mutations in order with a small delay to avoid rate limits.
 
 import { createClient } from '@supabase/supabase-js';
 import { getSecureCache, setSecureCache } from './secureCache';
@@ -29,7 +23,7 @@ export interface OfflineMutation {
   retries: number;
 }
 
-// Reactive state representation
+// state for sync queue and status
 let currentQueue: OfflineMutation[] = [];
 let currentIsSyncing = false;
 
@@ -50,9 +44,7 @@ function notifyListeners() {
   }
 }
 
-/**
- * Enqueue a mutation to the offline queue
- */
+// queue up local changes to sync later
 export async function enqueueMutation(
   operation: 'INSERT' | 'UPDATE',
   table: OfflineMutation['table'],
@@ -71,43 +63,33 @@ export async function enqueueMutation(
     retries: 0,
   };
 
-  // Add to in-memory queue
   currentQueue.push(newMutation);
   await setSecureCache('kk_offline_queue', currentQueue);
   notifyListeners();
 
-  // Attempt to sync immediately if online
+  // try syncing immediately if online
   if (navigator.onLine) {
     syncOfflineQueue();
   }
 }
 
-/**
- * Get the current sync queue items
- */
+// get all pending queue items
 export function getOfflineQueue(): OfflineMutation[] {
   return currentQueue;
 }
 
-/**
- * Get syncing state
- */
 export function isSyncingNow(): boolean {
   return currentIsSyncing;
 }
 
-/**
- * Clear the offline queue (e.g. on logout)
- */
+// wipe the queue (like when logging out)
 export async function clearOfflineQueue(): Promise<void> {
   currentQueue = [];
   await setSecureCache('kk_offline_queue', []);
   notifyListeners();
 }
 
-/**
- * Main loop: sequentially sync queue items with a 150ms delay
- */
+// sync loop to process queue items sequentially
 export async function syncOfflineQueue(): Promise<void> {
   if (currentIsSyncing) return;
   if (!navigator.onLine || !supabase) return;
@@ -116,13 +98,13 @@ export async function syncOfflineQueue(): Promise<void> {
   notifyListeners();
 
   try {
-    // Reload queue from secure cache
+    // reload queue from cache
     currentQueue = await getSecureCache<OfflineMutation[]>('kk_offline_queue', []);
 
     let index = 0;
     while (index < currentQueue.length) {
       if (!navigator.onLine) {
-        break; // Abort sync if connection is lost
+        break; // stop if we gone offline
       }
 
       const item = currentQueue[index];
@@ -137,13 +119,11 @@ export async function syncOfflineQueue(): Promise<void> {
       }
 
       if (success) {
-        // Remove from queue
         currentQueue.splice(index, 1);
         await setSecureCache('kk_offline_queue', currentQueue);
         notifyListeners();
       } else {
         if (shouldRetry) {
-          // Increment retries
           item.retries = (item.retries || 0) + 1;
           if (item.retries > 3) {
             console.error(`Sync queue item ${item.id} exceeded max retries. Discarding.`);
@@ -152,20 +132,19 @@ export async function syncOfflineQueue(): Promise<void> {
             await saveSyncFailureAuditLog(item);
             notifyListeners();
           } else {
-            // Update queue in cache with new retry count
             await setSecureCache('kk_offline_queue', currentQueue);
             notifyListeners();
-            break; // Stop execution on network error
+            break; // stop sync on network error
           }
         } else {
-          // Non-retryable error. Discard it.
+          // bad error or discarded by lww, just drop it
           currentQueue.splice(index, 1);
           await setSecureCache('kk_offline_queue', currentQueue);
           notifyListeners();
         }
       }
 
-      // Small sequential delay to avoid API rate limiting
+      // pace requests to avoid hitting rate limits
       if (currentQueue.length > 0) {
         await new Promise(resolve => setTimeout(resolve, 150));
       }
@@ -176,15 +155,13 @@ export async function syncOfflineQueue(): Promise<void> {
   }
 }
 
-/**
- * Process a single queue item with Last-Write-Wins checks
- */
+// process a single queue item with last-write-wins conflict checks
 async function processQueueItem(item: OfflineMutation): Promise<boolean> {
   if (!supabase) return false;
 
   const { table, operation, recordId, payload, localUpdatedAt } = item;
 
-  // 1. Fetch remote record's updated_at (if it exists)
+  // fetch remote record's updated time to check for conflicts
   const { data: remoteData, error: fetchError } = await supabase
     .from(table)
     .select('*')
@@ -196,7 +173,7 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
     throw fetchError;
   }
 
-  // 2. Conflict check (Last-Write-Wins)
+  // check if remote has newer updates
   if (remoteData && remoteData.updated_at) {
     const remoteTime = new Date(remoteData.updated_at).getTime();
     const localTime = new Date(localUpdatedAt).getTime();
@@ -208,7 +185,6 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
     }
   }
 
-  // 3. Perform write mutation
   if (operation === 'INSERT') {
     if (remoteData) {
       const { error: updateError } = await supabase
@@ -433,6 +409,7 @@ async function saveSyncFailureAuditLog(item: OfflineMutation) {
   await setSecureCache('kk_audit_logs', logs);
 }
 
+// bootstrap sync engine
 export async function initializeSyncEngine() {
   currentQueue = await getSecureCache<OfflineMutation[]>('kk_offline_queue', []);
   notifyListeners();
