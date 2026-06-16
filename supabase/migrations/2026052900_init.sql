@@ -1,9 +1,6 @@
--- =====================================================================
--- KKSync: SK Youth Information System - Unified Database Migration
--- Migration Date: 2026-05-29
--- =====================================================================
+-- kksync initial db migration (2026-05-29)
 
--- Clean slate: Drop existing tables to avoid schema conflicts
+-- wipe tables to start fresh
 DROP TABLE IF EXISTS public.system_config CASCADE;
 DROP TABLE IF EXISTS public.audit_logs CASCADE;
 DROP TABLE IF EXISTS public.documents CASCADE;
@@ -14,17 +11,14 @@ DROP TABLE IF EXISTS public.programs CASCADE;
 DROP TABLE IF EXISTS public.youth_profiles CASCADE;
 DROP TABLE IF EXISTS public.user_roles CASCADE;
 
--- Enable required postgres extensions
+-- enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 
--- =====================================================================
--- SECTION 1: Core & Shared Tables
--- =====================================================================
--- Tables shared between the web resident portal and desktop admin client.
+-- core / shared tables
 
--- 1. Table: user_roles (Extends Supabase auth.users)
+-- user roles (extends auth.users)
 CREATE TABLE IF NOT EXISTS public.user_roles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     role VARCHAR(50) NOT NULL CHECK (role IN ('admin', 'staff', 'resident')),
@@ -34,7 +28,7 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
 
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 
--- 2. Table: youth_profiles (Central resident profile database)
+-- resident profiles
 CREATE TABLE IF NOT EXISTS public.youth_profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -79,7 +73,7 @@ CREATE TABLE IF NOT EXISTS public.youth_profiles (
 
 ALTER TABLE public.youth_profiles ENABLE ROW LEVEL SECURITY;
 
--- 3. Table: system_config (Barangay details & system structural settings)
+-- barangay details & system config
 CREATE TABLE IF NOT EXISTS public.system_config (
     id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     barangay_name VARCHAR(255) DEFAULT 'San Antonio',
@@ -96,12 +90,9 @@ CREATE TABLE IF NOT EXISTS public.system_config (
 ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
 
 
--- =====================================================================
--- SECTION 2: Desktop Admin-Specific Tables
--- =====================================================================
--- Tables used primarily by SK admins and staff on the desktop app.
+-- desktop admin tables
 
--- 1. Table: programs (SK Projects, Events, and Seminars)
+-- programs (projects, events, seminars)
 CREATE TABLE IF NOT EXISTS public.programs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255) NOT NULL,
@@ -116,7 +107,7 @@ CREATE TABLE IF NOT EXISTS public.programs (
 
 ALTER TABLE public.programs ENABLE ROW LEVEL SECURITY;
 
--- 2. Table: attendance (Log of check-ins for events)
+-- attendance check-ins
 CREATE TABLE IF NOT EXISTS public.attendance (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     program_id UUID NOT NULL REFERENCES public.programs(id) ON DELETE CASCADE,
@@ -130,7 +121,7 @@ CREATE TABLE IF NOT EXISTS public.attendance (
 
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 
--- 3. Table: announcements (System news/bulletin board announcements)
+-- announcements
 CREATE TABLE IF NOT EXISTS public.announcements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255) NOT NULL,
@@ -142,7 +133,7 @@ CREATE TABLE IF NOT EXISTS public.announcements (
 
 ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 
--- 4. Table: documents (Files uploaded for resident verification and benefits)
+-- uploaded verification documents
 CREATE TABLE IF NOT EXISTS public.documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     youth_id UUID REFERENCES public.youth_profiles(id) ON DELETE CASCADE,
@@ -154,7 +145,7 @@ CREATE TABLE IF NOT EXISTS public.documents (
 
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
--- 5. Table: audit_logs (System modifications log for admin review)
+-- audit logs
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -168,12 +159,9 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 
--- =====================================================================
--- SECTION 3: Web Resident-Specific Tables
--- =====================================================================
--- Tables used to support public registrations coming from the web client.
+-- web resident portal tables
 
--- 1. Table: registration_submissions (Self-profiling queue from public portal)
+-- self-registration queue
 CREATE TABLE IF NOT EXISTS public.registration_submissions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     form_data JSONB NOT NULL,
@@ -195,9 +183,7 @@ CREATE TABLE IF NOT EXISTS public.registration_submissions (
 ALTER TABLE public.registration_submissions ENABLE ROW LEVEL SECURITY;
 
 
--- =====================================================================
--- SECTION 4: Performance Indexes
--- =====================================================================
+-- performance indexes
 CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_purok ON public.youth_profiles (status, purok);
 CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_gender ON public.youth_profiles (status, gender);
 CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_age ON public.youth_profiles (status, age);
@@ -208,11 +194,9 @@ CREATE INDEX IF NOT EXISTS idx_attendance_youth_id ON public.attendance (youth_i
 CREATE INDEX IF NOT EXISTS idx_registration_submissions_status ON public.registration_submissions (status);
 
 
--- =====================================================================
--- SECTION 5: Row-Level Security (RLS) Policies
--- =====================================================================
+-- rls policies
 
--- Helper function: Role verification (avoids infinite RLS recursion)
+-- checks roles without infinite recursion
 CREATE OR REPLACE FUNCTION public.check_user_role(p_user_id UUID, p_roles VARCHAR[])
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -224,9 +208,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- --- 5A: Shared & Core Tables Policies ---
+-- core / shared table policies
 
--- Youth Profiles Policies
+-- youth profiles
 CREATE POLICY "yp_admins_full_access" ON public.youth_profiles FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin']));
 
@@ -242,34 +226,34 @@ CREATE POLICY "yp_staff_insert" ON public.youth_profiles FOR INSERT TO authentic
 CREATE POLICY "yp_residents_own_select" ON public.youth_profiles FOR SELECT TO authenticated
     USING (user_id = auth.uid());
 
--- User Roles Policies
+-- user roles
 CREATE POLICY "ur_admins_full" ON public.user_roles FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin']));
 
 CREATE POLICY "ur_own_select" ON public.user_roles FOR SELECT TO authenticated
     USING (id = auth.uid());
 
--- System Config Policies
+-- system config
 CREATE POLICY "sys_config_admins_staff_full" ON public.system_config FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "sys_config_authenticated_select" ON public.system_config FOR SELECT TO authenticated
     USING (true);
 
--- --- 5B: Desktop Admin Tables Policies ---
+-- desktop admin policies
 
--- Programs Policies
+-- programs
 CREATE POLICY "prog_admins_staff_full" ON public.programs FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "prog_authenticated_select" ON public.programs FOR SELECT TO authenticated
     USING (true);
 
--- Attendance Policies
+-- attendance
 CREATE POLICY "att_admins_staff_full" ON public.attendance FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
--- Audit Logs Policies
+-- audit logs
 CREATE POLICY "al_admins_select" ON public.audit_logs FOR SELECT TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin']));
 
@@ -279,30 +263,30 @@ CREATE POLICY "al_allow_admin_staff_insert" ON public.audit_logs FOR INSERT TO a
 CREATE POLICY "al_deny_client_update" ON public.audit_logs FOR UPDATE TO authenticated USING (false);
 CREATE POLICY "al_deny_client_delete" ON public.audit_logs FOR DELETE TO authenticated USING (false);
 
--- Announcements Policies
+-- announcements
 CREATE POLICY "ann_admins_staff_full" ON public.announcements FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "ann_authenticated_select" ON public.announcements FOR SELECT TO authenticated
     USING (true);
 
--- Documents Policies
+-- documents
 CREATE POLICY "doc_admins_staff_full" ON public.documents FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
 CREATE POLICY "doc_residents_own_select" ON public.documents FOR SELECT TO authenticated
     USING (EXISTS (SELECT 1 FROM public.youth_profiles WHERE public.youth_profiles.id = public.documents.youth_id AND public.youth_profiles.user_id = auth.uid()));
 
--- --- 5C: Web Resident Tables Policies ---
+-- web resident policies
 
--- Registration Submissions Policies
+-- registration submissions
 CREATE POLICY "rs_anon_insert" ON public.registration_submissions FOR INSERT TO anon
     WITH CHECK (true);
 
 CREATE POLICY "rs_admins_staff_full" ON public.registration_submissions FOR ALL TO authenticated
     USING (public.check_user_role(auth.uid(), ARRAY['admin', 'staff'])) WITH CHECK (public.check_user_role(auth.uid(), ARRAY['admin', 'staff']));
 
--- --- 5D: Table Grants and Security Cleanups ---
+-- table grants and security cleanups
 REVOKE SELECT ON public.youth_profiles        FROM anon;
 REVOKE SELECT ON public.audit_logs            FROM anon;
 REVOKE SELECT ON public.user_roles            FROM anon;
@@ -314,11 +298,9 @@ REVOKE SELECT ON public.system_config         FROM anon;
 GRANT INSERT ON public.registration_submissions TO anon;
 
 
--- =====================================================================
--- SECTION 6: Automated Triggers
--- =====================================================================
+-- triggers
 
--- Trigger function: auto-update updated_at field on modifications
+-- updates updated_at timestamp
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -331,7 +313,7 @@ CREATE TRIGGER set_updated_at_youth_profiles BEFORE UPDATE ON public.youth_profi
 CREATE TRIGGER set_updated_at_programs BEFORE UPDATE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER set_updated_at_registration_submissions BEFORE UPDATE ON public.registration_submissions FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
--- Trigger function: handle audit logging operations
+-- logs changes to audit table
 CREATE OR REPLACE FUNCTION public.process_audit_logging()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -358,7 +340,7 @@ CREATE TRIGGER audit_registration_submissions_trigger AFTER INSERT OR UPDATE OR 
 CREATE TRIGGER audit_documents_trigger AFTER INSERT OR UPDATE OR DELETE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_attendance_trigger AFTER INSERT OR UPDATE OR DELETE ON public.attendance FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 
--- Trigger function: auto-create initial user roles in user_roles table on auth signups
+-- assigns default role to new users
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -385,7 +367,7 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Trigger function: ensure system always has at least one administrator role
+-- prevents removing the last admin
 CREATE OR REPLACE FUNCTION public.prevent_last_admin_lockout()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -403,13 +385,11 @@ CREATE OR REPLACE TRIGGER enforce_admin_presence
     FOR EACH ROW EXECUTE FUNCTION public.prevent_last_admin_lockout();
 
 
--- =====================================================================
--- SECTION 7: RPC Helper Functions
--- =====================================================================
+-- rpc helpers
 
--- --- 7A: Web Resident RPC Helpers ---
+-- web resident helper functions
 
--- Resident registration lookup verification helper
+-- verifies resident status and password
 CREATE OR REPLACE FUNCTION public.verify_resident_access(p_email TEXT, p_passcode TEXT)
 RETURNS JSONB AS $$
 DECLARE
@@ -417,7 +397,7 @@ DECLARE
     v_submission RECORD;
     v_expected_passcode TEXT;
 BEGIN
-    -- 1. Try to find in youth_profiles
+    -- look in profiles
     SELECT * INTO v_profile FROM public.youth_profiles WHERE LOWER(email) = LOWER(p_email) LIMIT 1;
     IF FOUND THEN
         v_expected_passcode := to_char(v_profile.date_of_birth, 'MMDDYYYY');
@@ -429,7 +409,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 2. Try to find in registration_submissions
+    -- look in pending submissions
     SELECT * INTO v_submission FROM public.registration_submissions WHERE LOWER(form_data->>'email') = LOWER(p_email) LIMIT 1;
     IF FOUND THEN
         v_expected_passcode := to_char(to_date(v_submission.form_data->>'dob', 'YYYY-MM-DD'), 'MMDDYYYY');
@@ -445,7 +425,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Secure contact update workflow RPC
+-- updates phone/email with passcode check
 CREATE OR REPLACE FUNCTION public.update_resident_contacts(
     p_id UUID,
     p_email TEXT,
@@ -478,9 +458,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- --- 7B: Desktop Admin RPC Helpers ---
+-- desktop admin helpers
 
--- Analytical Dashboard summary retriever RPC
+-- dashboard statistics aggregation
 CREATE OR REPLACE FUNCTION public.get_dashboard_summary()
 RETURNS JSONB AS $$
 DECLARE
@@ -499,7 +479,7 @@ DECLARE
     v_participation_data JSONB;
     v_classification_data JSONB;
 BEGIN
-    -- 1. General Metrics
+    -- general metrics
     SELECT COUNT(*) INTO v_total_youth FROM public.youth_profiles WHERE status = 'Active';
     SELECT COUNT(*) INTO v_pending_reviews FROM public.registration_submissions WHERE status = 'Pending';
     SELECT COUNT(*) INTO v_active_programs FROM public.programs WHERE status = 'Active';
@@ -510,7 +490,7 @@ BEGIN
         0
     ) INTO v_attendance_rate FROM public.attendance;
 
-    -- 2. Purok counts
+    -- count by purok
     SELECT jsonb_agg(d) INTO v_purok_data FROM (
         SELECT purok, COUNT(*) as count 
         FROM public.youth_profiles 
@@ -518,7 +498,7 @@ BEGIN
         GROUP BY purok
     ) d;
 
-    -- 3. Gender counts
+    -- count by gender
     SELECT jsonb_agg(d) INTO v_gender_data FROM (
         SELECT gender as name, COUNT(*) as value 
         FROM public.youth_profiles 
@@ -526,7 +506,7 @@ BEGIN
         GROUP BY gender
     ) d;
 
-    -- 4. Age groups
+    -- age distribution
     SELECT jsonb_agg(d) INTO v_age_data FROM (
         SELECT 
             CASE 
@@ -540,7 +520,7 @@ BEGIN
         GROUP BY 1
     ) d;
 
-    -- 5. Work status
+    -- work status counts
     SELECT jsonb_agg(d) INTO v_work_data FROM (
         SELECT COALESCE(work_status, 'Unspecified') as name, COUNT(*) as value 
         FROM public.youth_profiles 
@@ -548,7 +528,7 @@ BEGIN
         GROUP BY 1
     ) d;
 
-    -- 6. Education level
+    -- education level counts
     SELECT jsonb_agg(d) INTO v_edu_data FROM (
         SELECT COALESCE(education_level, 'Unspecified') as name, COUNT(*) as value 
         FROM public.youth_profiles 
@@ -556,7 +536,7 @@ BEGIN
         GROUP BY 1
     ) d;
 
-    -- Classification counts
+    -- youth classifications
     SELECT jsonb_agg(d) INTO v_classification_data FROM (
         SELECT COALESCE(youth_classification, 'Unspecified') as name, COUNT(*) as value
         FROM public.youth_profiles 
@@ -564,7 +544,7 @@ BEGIN
         GROUP BY 1
     ) d;
 
-    -- 7. Recent registrations (limit 5)
+    -- last 5 signups
     SELECT jsonb_agg(d) INTO v_recent_regs FROM (
         SELECT id, 
                (form_data->>'firstName') || ' ' || (form_data->>'lastName') as "fullName", 
@@ -577,7 +557,7 @@ BEGIN
         LIMIT 5
     ) d;
 
-    -- 8. Skills counts (limit 8)
+    -- top 8 skills
     SELECT jsonb_agg(d) INTO v_skills_data FROM (
         SELECT skill as name, COUNT(*) as value
         FROM (
@@ -590,7 +570,7 @@ BEGIN
         LIMIT 8
     ) d;
 
-    -- 9. Program Participation counts (limit 8)
+    -- attendance rate per event
     SELECT jsonb_agg(d) INTO v_participation_data FROM (
         SELECT title as name, COALESCE((SELECT COUNT(*) FROM public.attendance WHERE program_id = p.id AND status = 'Present'), 0) as value
         FROM public.programs p
@@ -619,7 +599,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 1. RPC: List System Users
+-- list users (admin only)
 CREATE OR REPLACE FUNCTION public.get_system_users()
 RETURNS TABLE (
     id UUID,
@@ -646,7 +626,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 2. RPC: Create System User
+-- add user (admin only)
 CREATE OR REPLACE FUNCTION public.create_system_user(
     p_email TEXT,
     p_password TEXT,
@@ -683,7 +663,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 3. RPC: Delete System User
+-- delete user (admin only)
 CREATE OR REPLACE FUNCTION public.delete_system_user(
     p_id UUID
 )
@@ -702,7 +682,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 4. RPC: Update System User Role
+-- update role (admin only)
 CREATE OR REPLACE FUNCTION public.update_system_user_role(
     p_id UUID,
     p_role TEXT
@@ -721,7 +701,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Backfill display_name for existing users
+-- backfill missing display names
 UPDATE public.user_roles r
 SET display_name = COALESCE(
     u.raw_user_meta_data->>'full_name',
@@ -732,9 +712,7 @@ FROM auth.users u
 WHERE r.id = u.id AND r.display_name IS NULL;
 
 
--- =====================================================================
--- SECTION 8: System Configuration Seed Data
--- =====================================================================
+-- seed initial config
 INSERT INTO public.system_config (
     id, barangay_name, sk_chairperson, puroks, sk_kagawads, sk_treasurer, sk_secretary, district, updated_at
 ) 
