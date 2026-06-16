@@ -10,16 +10,19 @@ This platform combines a desktop management application and a web-based registra
 
 To provide every Barangay and Sangguniang Kabataan with a unified digital platform for managing youth information, planning impactful programs, and making evidence-based decisions for community development.(fr tho)
 
+---
+
 ## System Architecture
 
 
-```a hybrid Desktop-Web-Cloud architecture that combines the security and administrative capabilities of a desktop application with the accessibility of a web portal, all powered by a centralized cloud backend.
+```
 ┌───────────────────────────────┐
 │     PUBLIC USERS (YOUTH)      │
 └──────────────┬────────────────┘
                │
                │
                ▼
+
 ┌──────────────────────────────────────┐
 │   WEB REGISTRATION PORTAL            │
 │                                      │
@@ -30,6 +33,7 @@ To provide every Barangay and Sangguniang Kabataan with a unified digital platfo
                │ Secure API Access
                │
                ▼
+
 ┌────────────────────────────────┐ 
 │   SUPABASE CLOUD               │ ├────────────────────────────────┤
 │ Authentication (Supabase Auth) │ 
@@ -40,9 +44,10 @@ To provide every Barangay and Sangguniang Kabataan with a unified digital platfo
 │ Analytics Data Layer           │ 
 └───────────────┬────────────────┘
                 │
-                │ Secure API Access
+                │ 
                 │
                 ▼
+
 ┌──────────────────────────────────────────────────┐ 
 │           CORUM DESKTOP MANAGEMENT APP           │ 
 │                                                  │ 
@@ -51,6 +56,7 @@ To provide every Barangay and Sangguniang Kabataan with a unified digital platfo
 │ • Event Management         • Attendance Tracking │ 
 │ • Reports & Analytics      • GIS & Mapping       │ 
 │ • User Administration      • Audit Logs          │ └──────────────────────────────────────────────────┘
+
 ```
 
 ---
@@ -73,13 +79,18 @@ To provide every Barangay and Sangguniang Kabataan with a unified digital platfo
 
 ```text
 kk-app/
-├── desktop/           # Tauri + React + TypeScript + Vite Desktop App
-│   ├── src/           # React frontend (dashboard, list views, settings)
-│   └── src-tauri/     # Rust configuration and build assets for Tauri
+├── desktop/           # Tauri + React + TypeScript Desktop Admin App
+│   ├── src/           # Views, Layouts, Database Contexts, Hooks
+│   ├── src-tauri/     # Rust build & configuration for Tauri windowing
+│   └── package.json   # Desktop app configuration and scripts
 ├── web/               # React + Vite Public Registration Web App
-│   └── src/           # Portal frontend, forms, offline/network status
-├── supabase/          # Database migrations and configurations
-└── package.json       # Monorepo configuration and workspace scripts
+│   ├── src/           # Sign-up forms, validation schema, secure syncer
+│   └── package.json   # Web portal configuration and scripts
+├── supabase/          # Cloud Backend & Database Configuration
+│   └── migrations/    # SQL schemas (combined core, desktop, & web schemas)
+├── README.md          # Global documentation and quick start guide
+├── package.json       # Monorepo workspaces definition
+└── package-lock.json  # Dependency lock file
 ```
 
 ---
