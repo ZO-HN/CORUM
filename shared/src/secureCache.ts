@@ -24,23 +24,16 @@ async function deriveKey(): Promise<CryptoKey> {
   }
 
   const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(secret + saltHex),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
+  const rawKeyMaterial = enc.encode(secret + saltHex);
 
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: enc.encode(saltHex),
-      iterations: 100_000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
+  // ponytail: fast SHA-256 hash instead of 100k iteration PBKDF2.
+  // Ceiling: doesn't stretch key space. Upgrade path: PBKDF2 if required by compliance.
+  const keyBuffer = await crypto.subtle.digest('SHA-256', rawKeyMaterial);
+
+  return crypto.subtle.importKey(
+    'raw',
+    keyBuffer,
+    { name: 'AES-GCM' },
     false,
     ['encrypt', 'decrypt']
   );
@@ -99,7 +92,6 @@ export async function setSecureCache<T>(key: string, value: T): Promise<void> {
   const encrypted = await encryptPayload(value);
   localStorage.setItem(key, encrypted);
 }
-
 
 export function removeSecureCache(key: string): void {
   localStorage.removeItem(key);

@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import * as db from './lib/db';
 import { z } from 'zod';
-import { useNetworkStatus } from './lib/useNetworkStatus';
+import { useNetworkStatus } from 'shared';
 import defaultLogo from './assets/logo.png';
 
 const page1Schema = z.object({

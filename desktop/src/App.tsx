@@ -48,11 +48,8 @@ import {
   Legend
 } from 'recharts';
 import * as db from './lib/db';
-import { purgeAllPiiCache } from './lib/secureCache';
+import { purgeAllPiiCache, useNetworkStatus, clearOfflineQueue, ErrorBoundary } from 'shared';
 import Dashboard from './components/Dashboard';
-import { useNetworkStatus } from './lib/useNetworkStatus';
-import { clearOfflineQueue } from './lib/offlineSync';
-import ErrorBoundary from './components/ErrorBoundary';
 import { z } from 'zod';
 import LoginPage from './components/LoginPage';
 import Sidebar from './components/layout/Sidebar';

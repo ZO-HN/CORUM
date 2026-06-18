@@ -21,7 +21,7 @@ import {
   Pie, 
   Cell 
 } from 'recharts';
-import ErrorBoundary from './ErrorBoundary';
+import { ErrorBoundary } from 'shared';
 
 // --- TypeScript Interfaces ---
 export interface YouthRegistration {

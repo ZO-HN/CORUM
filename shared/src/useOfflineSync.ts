@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { subscribeToSync, syncOfflineQueue, getOfflineQueue, isSyncingNow, type OfflineMutation } from './offlineSync';
+import { subscribeToSync, syncOfflineQueue, getOfflineQueue, isSyncingNow } from './offlineSync';
+import type { OfflineMutation } from './offlineSync';
 
 export function useOfflineSync() {
   const [syncState, setSyncState] = useState<{ queue: OfflineMutation[]; isSyncing: boolean }>({

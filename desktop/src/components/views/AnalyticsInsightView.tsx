@@ -24,7 +24,7 @@ import {
   Area,
   Legend,
 } from 'recharts';
-import ErrorBoundary from '../ErrorBoundary';
+import { ErrorBoundary } from 'shared';
 import * as db from '../../lib/db';
 
 const DEFAULT_REAL_PUROKS = [

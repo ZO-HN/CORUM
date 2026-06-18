@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "desktop",
-    "web"
+    "web",
+    "shared"
   ],
   "scripts": {
     "dev:desktop": "npm run dev --workspace=desktop",
