@@ -245,7 +245,7 @@ export const getPrograms = async (): Promise<Program[]> => {
 export const saveProgram = async (program: Omit<Program, 'id' | 'registeredCount' | 'presentCount'>): Promise<Program> => {
   const fullProgram: Program = {
     ...program,
-    id: `PROG-00${Math.floor(Math.random() * 900) + 100}`,
+    id: crypto.randomUUID(),
     registeredCount: 0,
     presentCount: 0,
     budget: program.budget || 10000,
@@ -258,7 +258,8 @@ export const saveProgram = async (program: Omit<Program, 'id' | 'registeredCount
     category: program.category,
     start_date: new Date(program.startDate).toISOString(),
     end_date: new Date(program.endDate).toISOString(),
-    status: program.status
+    status: program.status,
+    budget: program.budget || 10000
   };
 
   if (isSupabaseConfigured && supabase) {
@@ -302,6 +303,7 @@ export const getSubmissions = async (): Promise<RegistrationSubmission[]> => {
       formData: s.form_data,
       status: s.status,
       reviewerNotes: s.reviewer_notes,
+      reviewedBy: s.reviewed_by,
       createdAt: s.created_at,
       updatedAt: s.updated_at
     }));
@@ -312,7 +314,7 @@ export const getSubmissions = async (): Promise<RegistrationSubmission[]> => {
 
 export const saveSubmission = async (formData: RegistrationSubmission['formData']): Promise<RegistrationSubmission> => {
   const newSub: RegistrationSubmission = {
-    id: `SUB-${Math.floor(Math.random() * 9000) + 1000}`,
+    id: crypto.randomUUID(),
     formData,
     status: 'Pending',
     createdAt: new Date().toISOString(),
@@ -355,7 +357,27 @@ export const updateSubmissionStatus = async (
   reviewerNotes?: string
 ): Promise<boolean> => {
   const localUpdatedAt = new Date().toISOString();
-  const dbPayload = { status, reviewer_notes: reviewerNotes };
+  let reviewedBy: string | undefined = undefined;
+
+  if (isSupabaseConfigured && supabase) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      reviewedBy = user.id;
+    }
+  }
+
+  if (!reviewedBy) {
+    const savedUser = await getSecureCache<{ id: string } | null>('kk_current_user', null);
+    if (savedUser && savedUser.id) {
+      reviewedBy = savedUser.id;
+    }
+  }
+
+  const dbPayload = { 
+    status, 
+    reviewer_notes: reviewerNotes,
+    reviewed_by: reviewedBy
+  };
 
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
@@ -374,7 +396,7 @@ export const updateSubmissionStatus = async (
   const subs = await getLocalData<RegistrationSubmission>('kk_web_submissions', initialSubmissions);
   const updated = subs.map(sub => {
     if (sub.id === id) {
-      return { ...sub, status, reviewerNotes, updatedAt: localUpdatedAt };
+      return { ...sub, status, reviewerNotes, reviewedBy, updatedAt: localUpdatedAt };
     }
     return sub;
   });
@@ -455,8 +477,8 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
         if (data.type === 'synced_profile' && data.profile) {
           const p = data.profile;
           
-          let rate = 0;
-          let logs: { programTitle: string; role: string; date: string; status: 'Completed' | 'In Progress' }[] = [];
+          let rate = p.participation_rate || 0;
+          let logs: { programTitle: string; role: string; date: string; status: 'Completed' | 'In Progress' }[] = p.attendance_logs || [];
 
           try {
             const [programsRes, attendanceRes] = await Promise.all([

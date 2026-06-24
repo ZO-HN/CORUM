@@ -211,12 +211,13 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
     if (error) {
       console.error("Error fetching paginated profiles from Supabase:", error);
     } else if (data) {
-      const [programsRes, attendanceRes] = await Promise.all([
+      const pageProfileIds = data.map(p => p.id);
+      const [programsRes, attendanceRes, programCountRes] = await Promise.all([
         supabase.from('programs').select('id, title, status, start_date'),
-        supabase.from('attendance').select('youth_id, program_id, status')
+        supabase.from('attendance').select('youth_id, program_id, status').in('youth_id', pageProfileIds),
+        supabase.from('programs').select('id', { count: 'exact', head: true }).in('status', ['Active', 'Completed'])
       ]);
-      const activeOrCompletedPrograms = (programsRes.data || []).filter(p => p.status === 'Active' || p.status === 'Completed');
-      const totalProgramsCount = activeOrCompletedPrograms.length;
+      const totalProgramsCount = programCountRes.count || 0;
       const attendanceRecords = attendanceRes.data || [];
 
       const profiles = data.map(p => {
@@ -514,7 +515,7 @@ export const getPrograms = async (): Promise<Program[]> => {
 export const saveProgram = async (program: Omit<Program, 'id' | 'registeredCount' | 'presentCount'>): Promise<Program> => {
   const fullProgram: Program = {
     ...program,
-    id: `PROG-00${Math.floor(Math.random() * 900) + 100}`,
+    id: crypto.randomUUID(),
     registeredCount: 0,
     presentCount: 0,
     budget: program.budget || 10000,
@@ -527,7 +528,8 @@ export const saveProgram = async (program: Omit<Program, 'id' | 'registeredCount
     category: program.category,
     start_date: new Date(program.startDate).toISOString(),
     end_date: new Date(program.endDate).toISOString(),
-    status: program.status
+    status: program.status,
+    budget: program.budget || 10000
   };
 
   if (isSupabaseConfigured && supabase) {
@@ -571,6 +573,7 @@ export const getSubmissions = async (): Promise<RegistrationSubmission[]> => {
       formData: s.form_data,
       status: s.status,
       reviewerNotes: s.reviewer_notes,
+      reviewedBy: s.reviewed_by,
       createdAt: s.created_at,
       updatedAt: s.updated_at
     }));
@@ -581,7 +584,7 @@ export const getSubmissions = async (): Promise<RegistrationSubmission[]> => {
 
 export const saveSubmission = async (formData: RegistrationSubmission['formData']): Promise<RegistrationSubmission> => {
   const newSub: RegistrationSubmission = {
-    id: `SUB-${Math.floor(Math.random() * 9000) + 1000}`,
+    id: crypto.randomUUID(),
     formData,
     status: 'Pending',
     createdAt: new Date().toISOString(),
@@ -624,7 +627,27 @@ export const updateSubmissionStatus = async (
   reviewerNotes?: string
 ): Promise<boolean> => {
   const localUpdatedAt = new Date().toISOString();
-  const dbPayload = { status, reviewer_notes: reviewerNotes };
+  let reviewedBy: string | undefined = undefined;
+
+  if (isSupabaseConfigured && supabase) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      reviewedBy = user.id;
+    }
+  }
+
+  if (!reviewedBy) {
+    const savedUser = await getSecureCache<{ id: string } | null>('kk_current_user', null);
+    if (savedUser && savedUser.id) {
+      reviewedBy = savedUser.id;
+    }
+  }
+
+  const dbPayload = { 
+    status, 
+    reviewer_notes: reviewerNotes,
+    reviewed_by: reviewedBy
+  };
 
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
@@ -643,7 +666,7 @@ export const updateSubmissionStatus = async (
   const subs = await getLocalData<RegistrationSubmission>('kk_web_submissions', initialSubmissions);
   const updated = subs.map(sub => {
     if (sub.id === id) {
-      return { ...sub, status, reviewerNotes, updatedAt: localUpdatedAt };
+      return { ...sub, status, reviewerNotes, reviewedBy, updatedAt: localUpdatedAt };
     }
     return sub;
   });

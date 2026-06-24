@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS public.programs (
     start_date TIMESTAMP WITH TIME ZONE NOT NULL,
     end_date TIMESTAMP WITH TIME ZONE NOT NULL,
     status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'Active', 'Completed', 'Cancelled')),
+    budget NUMERIC DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -192,6 +193,15 @@ CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_education ON public.youth_p
 CREATE INDEX IF NOT EXISTS idx_attendance_program_status ON public.attendance (program_id, status);
 CREATE INDEX IF NOT EXISTS idx_attendance_youth_id ON public.attendance (youth_id);
 CREATE INDEX IF NOT EXISTS idx_registration_submissions_status ON public.registration_submissions (status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_youth_profiles_lower_email ON public.youth_profiles (LOWER(email));
+CREATE INDEX IF NOT EXISTS idx_youth_profiles_user_id ON public.youth_profiles (user_id);
+CREATE INDEX IF NOT EXISTS idx_programs_start_date ON public.programs (start_date);
+CREATE INDEX IF NOT EXISTS idx_registration_submissions_created_at ON public.registration_submissions (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON public.audit_logs (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON public.audit_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_documents_youth_id ON public.documents (youth_id);
+CREATE INDEX IF NOT EXISTS idx_registration_submissions_reviewed_by ON public.registration_submissions (reviewed_by);
+CREATE INDEX IF NOT EXISTS idx_registration_submissions_form_data_email ON public.registration_submissions ((LOWER(form_data->>'email')));
 
 
 -- rls policies
@@ -200,13 +210,20 @@ CREATE INDEX IF NOT EXISTS idx_registration_submissions_status ON public.registr
 CREATE OR REPLACE FUNCTION public.check_user_role(p_user_id UUID, p_roles VARCHAR[])
 RETURNS BOOLEAN AS $$
 BEGIN
+    -- Prevent checking other users' roles unless the caller is an admin
+    IF p_user_id <> auth.uid() AND NOT EXISTS (
+        SELECT 1 FROM public.user_roles WHERE id = auth.uid() AND role = 'admin'
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
     RETURN EXISTS (
         SELECT 1 FROM public.user_roles
         WHERE id = p_user_id
         AND role = ANY(p_roles)
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- core / shared table policies
 
@@ -307,7 +324,7 @@ BEGIN
     NEW.updated_at = timezone('utc'::text, now());
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
 
 CREATE TRIGGER set_updated_at_youth_profiles BEFORE UPDATE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER set_updated_at_programs BEFORE UPDATE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -332,7 +349,7 @@ BEGIN
     END IF;
     RETURN NULL;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 CREATE TRIGGER audit_youth_profiles_trigger AFTER INSERT OR UPDATE OR DELETE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_programs_trigger AFTER INSERT OR UPDATE OR DELETE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
@@ -361,7 +378,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
@@ -378,7 +395,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
 
 CREATE OR REPLACE TRIGGER enforce_admin_presence
     BEFORE UPDATE OR DELETE ON public.user_roles
@@ -396,15 +413,47 @@ DECLARE
     v_profile RECORD;
     v_submission RECORD;
     v_expected_passcode TEXT;
+    v_attendance_logs JSONB;
+    v_participation_rate INT;
+    v_profile_json JSONB;
 BEGIN
     -- look in profiles
     SELECT * INTO v_profile FROM public.youth_profiles WHERE LOWER(email) = LOWER(p_email) LIMIT 1;
     IF FOUND THEN
         v_expected_passcode := to_char(v_profile.date_of_birth, 'MMDDYYYY');
         IF p_passcode = v_expected_passcode OR (v_profile.otp_code IS NOT NULL AND p_passcode = v_profile.otp_code) THEN
+            -- Fetch attendance logs
+            SELECT COALESCE(
+                (SELECT jsonb_agg(jsonb_build_object(
+                    'programTitle', pr.title,
+                    'role', 'Participant',
+                    'date', to_char(pr.start_date, 'Mon YYYY'),
+                    'status', CASE WHEN pr.status = 'Completed' THEN 'Completed' ELSE 'In Progress' END
+                ) ORDER BY pr.start_date DESC)
+                FROM public.attendance a
+                JOIN public.programs pr ON a.program_id = pr.id
+                WHERE a.youth_id = v_profile.id),
+                '[]'::jsonb
+            ) INTO v_attendance_logs;
+
+            -- Calculate participation rate
+            SELECT COALESCE(
+                (SELECT (COUNT(CASE WHEN a.status = 'Present' THEN 1 END)::FLOAT / NULLIF(COUNT(DISTINCT pr.id), 0) * 100)::INT
+                 FROM public.programs pr
+                 LEFT JOIN public.attendance a ON pr.id = a.program_id AND a.youth_id = v_profile.id
+                 WHERE pr.status IN ('Active', 'Completed')),
+                0
+            ) INTO v_participation_rate;
+
+            -- Strip sensitive otp_code and append logs/rate
+            v_profile_json := row_to_json(v_profile)::jsonb - 'otp_code' || jsonb_build_object(
+                'attendance_logs', v_attendance_logs,
+                'participation_rate', v_participation_rate
+            );
+
             RETURN jsonb_build_object(
                 'type', 'synced_profile',
-                'profile', row_to_json(v_profile)::jsonb
+                'profile', v_profile_json
             );
         END IF;
     END IF;
@@ -423,7 +472,7 @@ BEGIN
 
     RETURN NULL;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- updates phone/email with passcode check
 CREATE OR REPLACE FUNCTION public.update_resident_contacts(
@@ -456,7 +505,7 @@ BEGIN
 
     RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- desktop admin helpers
 
@@ -597,7 +646,7 @@ BEGIN
         'participationData', COALESCE(v_participation_data, '[]'::jsonb)
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- list users (admin only)
 CREATE OR REPLACE FUNCTION public.get_system_users()
@@ -624,7 +673,7 @@ BEGIN
     LEFT JOIN public.user_roles r ON u.id = r.id
     ORDER BY u.created_at DESC;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- add user (admin only)
 CREATE OR REPLACE FUNCTION public.create_system_user(
@@ -661,7 +710,7 @@ BEGIN
 
     RETURN v_user_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- delete user (admin only)
 CREATE OR REPLACE FUNCTION public.delete_system_user(
@@ -680,7 +729,7 @@ BEGIN
     DELETE FROM auth.users WHERE id = p_id;
     RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- update role (admin only)
 CREATE OR REPLACE FUNCTION public.update_system_user_role(
@@ -699,7 +748,7 @@ BEGIN
 
     RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- backfill missing display names
 UPDATE public.user_roles r

@@ -93,6 +93,7 @@ export interface RegistrationSubmission {
   };
   status: 'Pending' | 'Approved' | 'Rejected';
   reviewerNotes?: string;
+  reviewedBy?: string;
   createdAt: string;
   updatedAt?: string;
 }

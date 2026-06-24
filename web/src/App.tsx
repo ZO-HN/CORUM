@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import * as db from './lib/db';
 import { z } from 'zod';
-import { useNetworkStatus } from 'shared';
+import { useNetworkStatus, getSecureCache, setSecureCache, removeSecureCache } from 'shared';
 import defaultLogo from './assets/logo.png';
 
 const page1Schema = z.object({
@@ -157,9 +157,6 @@ export default function App() {
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
   const [triedNextStep, setTriedNextStep] = useState<boolean>(false);
   const [triedSubmit, setTriedSubmit] = useState<boolean>(false);
-  const [_validationErrors, setValidationErrors] = useState<Record<string, string>>({});
-
-
   const requiresWorkSpecify = (status: string) => {
     return status === 'Employed' || status === 'Self-employed';
   };
@@ -172,33 +169,11 @@ export default function App() {
   };
 
   const isPage1Valid = () => {
-    const res = page1Schema.safeParse(formData);
-    if (!res.success) {
-      const errs: Record<string, string> = {};
-      res.error.issues.forEach(issue => {
-        const path = issue.path[0] as string;
-        errs[path] = issue.message;
-      });
-      setValidationErrors(errs);
-      return false;
-    }
-    setValidationErrors({});
-    return true;
+    return page1Schema.safeParse(formData).success;
   };
 
   const isPage2Valid = () => {
-    const res = page2Schema.safeParse(formData);
-    if (!res.success) {
-      const errs: Record<string, string> = {};
-      res.error.issues.forEach(issue => {
-        const path = issue.path[0] as string;
-        errs[path] = issue.message;
-      });
-      setValidationErrors(errs);
-      return false;
-    }
-    setValidationErrors({});
-    return true;
+    return page2Schema.safeParse(formData).success;
   };
 
   // Authentication States
@@ -212,17 +187,47 @@ export default function App() {
     profile?: db.YouthProfile;
     submission?: db.RegistrationSubmission;
     type: 'synced_profile' | 'pending_submission';
-  } | null>(() => {
-    const saved = localStorage.getItem('kk_session_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  } | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState<boolean>(true);
+
+  // Timeout references for cleanup on unmount
+  const updateContactsTimeoutRef = React.useRef<any>(null);
+  const navClickTimeoutRef = React.useRef<any>(null);
 
   useEffect(() => {
-    if (sessionUser) {
-      localStorage.setItem('kk_session_user', JSON.stringify(sessionUser));
-    } else {
-      localStorage.removeItem('kk_session_user');
-    }
+    const loadSession = async () => {
+      try {
+        const saved = await getSecureCache<{
+          profile?: db.YouthProfile;
+          submission?: db.RegistrationSubmission;
+          type: 'synced_profile' | 'pending_submission';
+        } | null>('kk_session_user', null);
+        if (saved) {
+          setSessionUser(saved);
+        }
+      } catch (err) {
+        console.error("Failed to load secure session user:", err);
+      } finally {
+        setIsSessionLoading(false);
+      }
+    };
+    loadSession();
+
+    return () => {
+      if (updateContactsTimeoutRef.current) clearTimeout(updateContactsTimeoutRef.current);
+      if (navClickTimeoutRef.current) clearTimeout(navClickTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const saveSession = async () => {
+      if (sessionUser) {
+        await setSecureCache('kk_session_user', sessionUser);
+      } else {
+        removeSecureCache('kk_session_user');
+      }
+    };
+    saveSession();
   }, [sessionUser]);
 
   // Update Contacts States
@@ -407,43 +412,7 @@ export default function App() {
       const emailQuery = loginEmail.trim().toLowerCase();
       const enteredPasscode = loginPasscode.trim().replace(/\D/g, ''); // Remove non-numeric
 
-      if (emailQuery === '123' && enteredPasscode === '123') {
-        const placeholderUser = {
-          id: "YTH-PLACEHOLDER-123",
-          firstName: "Placeholder",
-          lastName: "User",
-          middleName: "D",
-          age: 21,
-          gender: "Unlabeled",
-          dob: "2005-01-01",
-          civilStatus: "Single",
-          bloodType: "O+",
-          nationality: "Filipino",
-          contactNumber: "+63 900 123 4567",
-          email: "123",
-          address: `123 Main St., Purok East, Barangay ${barangayName}`,
-          purok: "East",
-          isRegisteredVoter: true,
-          precinctNumber: "123-X",
-          educationLevel: "Bachelor of Science in Computer Science",
-          educationalStatus: "College Graduate",
-          scholarshipStatus: "None",
-          skills: ["Programming", "Design", "Problem Solving"],
-          avatarUrl: "",
-          status: "Active",
-          participationRate: 100,
-          joinedDate: "June 04, 2026",
-          attendanceLogs: [
-            { programTitle: "SK Profiling Rollout", role: "Beta Tester", date: "June 2026", status: "Completed" }
-          ]
-        };
-        setSessionUser({
-          profile: placeholderUser as any,
-          type: 'synced_profile'
-        });
-        setIsAuthenticating(false);
-        return;
-      }
+
 
       // 1. Authenticate resident securely via backend RPC
       const result = await db.verifyResidentAccess(emailQuery, enteredPasscode);
@@ -516,7 +485,7 @@ export default function App() {
           }
         });
         setUpdateContactsSuccess('Contacts updated successfully!');
-        setTimeout(() => {
+        updateContactsTimeoutRef.current = setTimeout(() => {
           setIsEditingContacts(false);
           setUpdateContactsSuccess('');
         }, 2000);
@@ -544,7 +513,7 @@ export default function App() {
       setIsRegistering(false);
       setSubmissionSuccess(null);
       // Let the DOM update first then scroll
-      setTimeout(() => {
+      navClickTimeoutRef.current = setTimeout(() => {
         const element = document.getElementById('profiling-hub');
         if (element) {
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -552,6 +521,17 @@ export default function App() {
       }, 50);
     }
   };
+
+  if (isSessionLoading) {
+    return (
+      <div className="bg-background text-on-surface min-h-screen flex flex-col items-center justify-center space-y-4 selection:bg-secondary selection:text-on-secondary">
+        <RefreshCw className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-xs font-mono font-bold uppercase tracking-widest text-secondary">
+          Initializing Secure Session...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-background text-on-surface font-body min-h-screen selection:bg-secondary selection:text-on-secondary relative flex flex-col justify-between overflow-x-hidden">

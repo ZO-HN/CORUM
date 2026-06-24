@@ -47,3 +47,7 @@ graphify-out/
 *.njsproj
 *.sln
 *.sw?
+
+# Agent tooling directories
+.bg-shell/
+.gsd/

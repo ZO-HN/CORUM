@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, 
   Calendar, 
@@ -702,6 +702,15 @@ export default function App() {
   
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const [purokFilter, setPurokFilter] = useState<string>('All');
   const [genderFilter, setGenderFilter] = useState<string>('All');
   const [voterFilter, setVoterFilter] = useState<string>('All');
@@ -717,7 +726,7 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, purokFilter, genderFilter, voterFilter, civilStatusFilter, workStatusFilter, classificationFilter, educationFilter, statusFilter]);
+  }, [debouncedSearchQuery, purokFilter, genderFilter, voterFilter, civilStatusFilter, workStatusFilter, classificationFilter, educationFilter, statusFilter]);
   
   // Selected Profile for Detail View (Bento Grid)
   const [selectedYouthId, setSelectedYouthId] = useState<string | null>(null);
@@ -835,6 +844,9 @@ export default function App() {
       gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
       oscillator.connect(gainNode);
       gainNode.connect(audioCtx.destination);
+      oscillator.onended = () => {
+        audioCtx.close().catch((err) => console.error("Error closing AudioContext:", err));
+      };
       oscillator.start();
       oscillator.stop(audioCtx.currentTime + 0.15); // beep for 0.15s
     } catch (e) {
@@ -939,18 +951,19 @@ export default function App() {
       }
       
       // 2. Fetch tab-specific data conditionally to avoid huge eager queries
-      if (activeTab === 'youth-list') {
-        await fetchPaginatedProfiles();
-      } else if (activeTab === 'programs' || activeTab === 'attendance') {
+      // Note: 'youth-list' pagination is handled by its own dedicated useEffect
+      if (activeTab === 'programs' || activeTab === 'attendance') {
         const fetchedPrograms = await db.getPrograms();
         setPrograms(fetchedPrograms);
       } else if (activeTab === 'add-youth' || activeTab === 'dashboard') {
         const fetchedSubmissions = await db.getSubmissions();
         setSubmissions(fetchedSubmissions);
       } else if (activeTab === 'documents') {
-        const fetchedDocs = await db.getDocuments();
+        const [fetchedDocs, fetchedProfiles] = await Promise.all([
+          db.getDocuments(),
+          db.getProfiles()
+        ]);
         setDocuments(fetchedDocs);
-        const fetchedProfiles = await db.getProfiles();
         setYouthProfiles(fetchedProfiles);
       } else if (activeTab === 'settings') {
         const fetchedLogs = await db.getAuditLogs();
@@ -964,9 +977,11 @@ export default function App() {
           setUsers(saved ? JSON.parse(saved) : []);
         }
       } else if (activeTab === 'reports') {
-        const fetchedProfiles = await db.getProfiles();
+        const [fetchedProfiles, fetchedPrograms] = await Promise.all([
+          db.getProfiles(),
+          db.getPrograms()
+        ]);
         setYouthProfiles(fetchedProfiles);
-        const fetchedPrograms = await db.getPrograms();
         setPrograms(fetchedPrograms);
       }
     } catch (error) {
@@ -982,7 +997,7 @@ export default function App() {
       const result = await db.getProfilesPaginated({
         page: currentPage,
         pageSize: pageSize,
-        search: searchQuery,
+        search: debouncedSearchQuery,
         purok: purokFilter,
         gender: genderFilter,
         isRegisteredVoter: voterFilter === 'Voter' ? true : voterFilter === 'Non-Voter' ? false : undefined,
@@ -1014,7 +1029,7 @@ export default function App() {
   }, [
     activeTab,
     currentPage,
-    searchQuery,
+    debouncedSearchQuery,
     purokFilter,
     genderFilter,
     voterFilter,
@@ -1274,7 +1289,7 @@ export default function App() {
     setTriedSubmit(true);
     if (!isPage1Valid() || !isPage2Valid()) return;
 
-    const newId = `YTH-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newId = crypto.randomUUID();
     
     const mappedEducationLevel = newYouth.educationSpecify
       ? `${newYouth.educationBackground} (${newYouth.educationSpecify})`
@@ -1527,6 +1542,47 @@ export default function App() {
       purok: z.string().min(1, "Purok is required")
     });
 
+    const resolveHeaderKey = (keys: string[]): string | undefined => {
+      for (const k of keys) {
+        const matchKey = headers.find(h => h === k || h.replace(/\s+/g, '').includes(k.replace(/\s+/g, '')));
+        if (matchKey) return matchKey;
+      }
+      return undefined;
+    };
+
+    const headerMap = {
+      firstName: resolveHeaderKey(['first name', 'firstname', 'first', 'name', 'pangalan']),
+      lastName: resolveHeaderKey(['last name', 'lastname', 'last', 'apelyido']),
+      middleName: resolveHeaderKey(['middle name', 'middlename', 'middle']),
+      dob: resolveHeaderKey(['birthdate', 'dob', 'date of birth', 'kapanganakan']),
+      purok: resolveHeaderKey(['purok', 'sector', 'purok area']),
+      age: resolveHeaderKey(['age', 'edad']),
+      gender: resolveHeaderKey(['gender', 'kasarian', 'sex']),
+      civilStatus: resolveHeaderKey(['civil status', 'civilstatus', 'status']),
+      bloodType: resolveHeaderKey(['blood type', 'bloodtype', 'blood']),
+      nationality: resolveHeaderKey(['nationality', 'bansa']),
+      contact: resolveHeaderKey(['contact number', 'contact', 'phone', 'telephone', 'telepono']),
+      email: resolveHeaderKey(['email', 'e-mail', 'mail']),
+      address: resolveHeaderKey(['address', 'home address', 'tirahan']),
+      voter: resolveHeaderKey(['voter', 'registered voter', 'is voter', 'botante']),
+      precinct: resolveHeaderKey(['precinct', 'precinct number', 'precinctnumber']),
+      eduLevel: resolveHeaderKey(['education level', 'educationlevel', 'level']),
+      eduStatus: resolveHeaderKey(['educational status', 'educationalstatus', 'status']),
+      scholarship: resolveHeaderKey(['scholarship status', 'scholarshipstatus', 'scholarship']),
+      workStatus: resolveHeaderKey(['work status', 'workstatus', 'work_status', 'employment status', 'work']),
+      workSpecify: resolveHeaderKey(['work specify', 'workspecify', 'work_specify', 'occupation', 'job']),
+      eduBackground: resolveHeaderKey(['education background', 'educationbackground', 'education_background', 'attainment']),
+      eduSpecify: resolveHeaderKey(['education specify', 'educationspecify', 'education_specify', 'course', 'strand']),
+      youthClassification: resolveHeaderKey(['youth classification', 'youthclassification', 'youth_classification', 'classification']),
+      hasScholarship: resolveHeaderKey(['has scholarship', 'hasscholarship', 'has_scholarship', 'scholar']),
+      scholarshipSpecify: resolveHeaderKey(['scholarship specify', 'scholarshipspecify', 'scholarship_specify']),
+      participatedLastKK: resolveHeaderKey(['participated last kk election', 'participatedlastkkelection', 'participated_last_kk_election', 'kk election']),
+      attendedKKAssembly: resolveHeaderKey(['attended kk assembly', 'attendedkkassembly', 'attended_kk_assembly', 'assembly']),
+      assemblyCount: resolveHeaderKey(['kk assembly count', 'kkassemblycount', 'kk_assembly_count', 'assembly count']),
+      facebookLink: resolveHeaderKey(['facebook link', 'facebooklink', 'facebook_link', 'facebook', 'fb']),
+      skills: resolveHeaderKey(['skills', 'talento', 'kakayahan'])
+    };
+
     for (let i = 1; i < lines.length; i++) {
       const values = splitLine(lines[i]);
       const rowObj: any = {};
@@ -1536,21 +1592,19 @@ export default function App() {
         }
       });
 
-      const getValue = (keys: string[], defaultValue: any) => {
-        for (const k of keys) {
-          const matchKey = headers.find(h => h === k || h.replace(/\s+/g, '').includes(k.replace(/\s+/g, '')));
-          if (matchKey && rowObj[matchKey] !== undefined && rowObj[matchKey] !== '') {
-            return rowObj[matchKey];
-          }
+      const getVal = (mapKey: keyof typeof headerMap, defaultValue: any) => {
+        const headerKey = headerMap[mapKey];
+        if (headerKey && rowObj[headerKey] !== undefined && rowObj[headerKey] !== '') {
+          return rowObj[headerKey];
         }
         return defaultValue;
       };
 
-      const rawFirstName = getValue(['first name', 'firstname', 'first', 'name', 'pangalan'], '');
-      const rawLastName = getValue(['last name', 'lastname', 'last', 'apelyido'], '');
-      const rawMiddleName = getValue(['middle name', 'middlename', 'middle'], '');
-      const rawDobInput = getValue(['birthdate', 'dob', 'date of birth', 'kapanganakan'], '');
-      const rawPurokInput = getValue(['purok', 'sector', 'purok area'], '');
+      const rawFirstName = getVal('firstName', '');
+      const rawLastName = getVal('lastName', '');
+      const rawMiddleName = getVal('middleName', '');
+      const rawDobInput = getVal('dob', '');
+      const rawPurokInput = getVal('purok', '');
 
       const rowErrors: string[] = [];
 
@@ -1589,7 +1643,7 @@ export default function App() {
         continue;
       }
 
-      let calculatedAge = parseInt(getValue(['age', 'edad'], ''), 10);
+      let calculatedAge = parseInt(getVal('age', ''), 10);
       if (isNaN(calculatedAge) && parsedDob) {
         try {
           const birthDate = new Date(parsedDob);
@@ -1606,27 +1660,27 @@ export default function App() {
         calculatedAge = 18;
       }
 
-      let rawGender = getValue(['gender', 'kasarian', 'sex'], 'Male').trim();
+      let rawGender = getVal('gender', 'Male').trim();
       if (rawGender.toLowerCase().startsWith('m')) rawGender = 'Male';
       else if (rawGender.toLowerCase().startsWith('f')) rawGender = 'Female';
       else rawGender = 'Unlabeled';
 
-      const rawCivilStatus = getValue(['civil status', 'civilstatus', 'status'], 'Single');
-      const rawBloodType = getValue(['blood type', 'bloodtype', 'blood'], 'O+');
-      const rawNationality = getValue(['nationality', 'bansa'], 'Filipino');
-      const rawContact = getValue(['contact number', 'contact', 'phone', 'telephone', 'telepono'], '+63 900 000 0000');
-      const rawEmail = getValue(['email', 'e-mail', 'mail'], 'resident@kksync.gov');
-      const rawAddress = getValue(['address', 'home address', 'tirahan'], 'Brgy. San Antonio');
+      const rawCivilStatus = getVal('civilStatus', 'Single');
+      const rawBloodType = getVal('bloodType', 'O+');
+      const rawNationality = getVal('nationality', 'Filipino');
+      const rawContact = getVal('contact', '+63 900 000 0000');
+      const rawEmail = getVal('email', 'resident@kksync.gov');
+      const rawAddress = getVal('address', 'Brgy. San Antonio');
       
-      const rawVoterValue = getValue(['voter', 'registered voter', 'is voter', 'botante'], 'false').toLowerCase();
+      const rawVoterValue = getVal('voter', 'false').toLowerCase();
       const rawVoter = rawVoterValue === 'true' || rawVoterValue === 'yes' || rawVoterValue === '1' || rawVoterValue === 'voter';
-      const rawPrecinct = getValue(['precinct', 'precinct number', 'precinctnumber'], '');
+      const rawPrecinct = getVal('precinct', '');
 
-      const rawEduLevel = getValue(['education level', 'educationlevel', 'level'], 'High School');
-      const rawEduStatus = getValue(['educational status', 'educationalstatus', 'status'], 'Student');
-      const rawScholarship = getValue(['scholarship status', 'scholarshipstatus', 'scholarship'], 'None');
+      const rawEduLevel = getVal('eduLevel', 'High School');
+      const rawEduStatus = getVal('eduStatus', 'Student');
+      const rawScholarship = getVal('scholarship', 'None');
 
-      let parsedWorkStatus = getValue(['work status', 'workstatus', 'work_status', 'employment status', 'work'], 'Unemployed').trim();
+      let parsedWorkStatus = getVal('workStatus', 'Unemployed').trim();
       const workOptions = [
         "Employed", "Unemployed", "Self-employed",
         "Currently looking for a job", "Not interested looking for a job"
@@ -1634,9 +1688,9 @@ export default function App() {
       const matchedWork = workOptions.find(opt => opt.toLowerCase() === parsedWorkStatus.toLowerCase() || opt.toLowerCase().includes(parsedWorkStatus.toLowerCase()));
       const rawWorkStatus = matchedWork || parsedWorkStatus || 'Unemployed';
 
-      const rawWorkSpecify = getValue(['work specify', 'workspecify', 'work_specify', 'occupation', 'job'], '');
+      const rawWorkSpecify = getVal('workSpecify', '');
 
-      let parsedEduBackground = getValue(['education background', 'educationbackground', 'education_background', 'attainment'], '').trim();
+      let parsedEduBackground = getVal('eduBackground', '').trim();
       const eduOptions = [
         "Elementary Level", "Elementary Graduate",
         "High School Level", "High School Graduate",
@@ -1651,9 +1705,9 @@ export default function App() {
       const matchedEdu = eduOptions.find(opt => opt.toLowerCase() === parsedEduBackground.toLowerCase() || opt.toLowerCase().includes(parsedEduBackground.toLowerCase()));
       const rawEduBackground = matchedEdu || parsedEduBackground || 'High School Graduate';
 
-      const rawEduSpecify = getValue(['education specify', 'educationspecify', 'education_specify', 'course', 'strand'], '');
+      const rawEduSpecify = getVal('eduSpecify', '');
 
-      let parsedYouthClassification = getValue(['youth classification', 'youthclassification', 'youth_classification', 'classification'], 'In School Youth (Nag skwela)').trim();
+      let parsedYouthClassification = getVal('youthClassification', 'In School Youth (Nag skwela)').trim();
       const classOptions = [
         "In School Youth (Nag skwela)",
         "Out of School Youth (Wala nag Skwela)",
@@ -1662,15 +1716,15 @@ export default function App() {
       ];
       const matchedClass = classOptions.find(opt => opt.toLowerCase() === parsedYouthClassification.toLowerCase() || opt.toLowerCase().includes(parsedYouthClassification.toLowerCase()));
       const rawYouthClassification = matchedClass || parsedYouthClassification || 'In School Youth (Nag skwela)';
-      const rawHasScholarship = getValue(['has scholarship', 'hasscholarship', 'has_scholarship', 'scholar'], 'No');
-      const rawScholarshipSpecify = getValue(['scholarship specify', 'scholarshipspecify', 'scholarship_specify'], '');
-      const rawParticipatedLastKK = getValue(['participated last kk election', 'participatedlastkkelection', 'participated_last_kk_election', 'kk election'], 'No');
-      const rawAttendedKKAssembly = getValue(['attended kk assembly', 'attendedkkassembly', 'attended_kk_assembly', 'assembly'], 'No');
-      let rawAssemblyCount = parseInt(getValue(['kk assembly count', 'kkassemblycount', 'kk_assembly_count', 'assembly count'], '0'), 10);
+      const rawHasScholarship = getVal('hasScholarship', 'No');
+      const rawScholarshipSpecify = getVal('scholarshipSpecify', '');
+      const rawParticipatedLastKK = getVal('participatedLastKK', 'No');
+      const rawAttendedKKAssembly = getVal('attendedKKAssembly', 'No');
+      let rawAssemblyCount = parseInt(getVal('assemblyCount', '0'), 10);
       if (isNaN(rawAssemblyCount)) rawAssemblyCount = 0;
-      const rawFacebookLink = getValue(['facebook link', 'facebooklink', 'facebook_link', 'facebook', 'fb'], '');
+      const rawFacebookLink = getVal('facebookLink', '');
 
-      const rawSkillsText = getValue(['skills', 'talento', 'kakayahan'], '');
+      const rawSkillsText = getVal('skills', '');
       const rawSkills = rawSkillsText ? rawSkillsText.split(',').map((s: string) => sanitizeField(s.trim())).filter((s: string) => s.length > 0) : [sanitizeField('Teamwork')];
 
       parsed.push({
@@ -1957,57 +2011,79 @@ export default function App() {
     );
   }
 
-  // --- Dashboard Data Calculations ---
-  const maleCount = youthProfiles.filter(y => y.gender === 'Male').length;
-  const femaleCount = youthProfiles.filter(y => y.gender === 'Female').length;
-  const otherCount = youthProfiles.filter(y => y.gender !== 'Male' && y.gender !== 'Female').length;
-  const totalGender = maleCount + femaleCount + otherCount || 1;
-  const malePercent = Math.round((maleCount / totalGender) * 100);
-  const femalePercent = Math.round((femaleCount / totalGender) * 100);
+  // --- Dashboard Data Calculations (memoized to avoid re-computation on every render) ---
+  const dashboardStats = useMemo(() => {
+    const maleCount = youthProfiles.filter(y => y.gender === 'Male').length;
+    const femaleCount = youthProfiles.filter(y => y.gender === 'Female').length;
+    const otherCount = youthProfiles.filter(y => y.gender !== 'Male' && y.gender !== 'Female').length;
+    const totalGender = maleCount + femaleCount + otherCount || 1;
 
-  const age15to17Count = youthProfiles.filter(y => y.age >= 15 && y.age <= 17).length;
-  const age18to24Count = youthProfiles.filter(y => y.age >= 18 && y.age <= 24).length;
-  const age25to30Count = youthProfiles.filter(y => y.age >= 25 && y.age <= 30).length;
-  const totalAgeGroups = age15to17Count + age18to24Count + age25to30Count || 1;
-  const age15to17Percent = Math.round((age15to17Count / totalAgeGroups) * 100);
-  const age18to24Percent = Math.round((age18to24Count / totalAgeGroups) * 100);
-  const age25to30Percent = Math.round((age25to30Count / totalAgeGroups) * 100);
+    const age15to17Count = youthProfiles.filter(y => y.age >= 15 && y.age <= 17).length;
+    const age18to24Count = youthProfiles.filter(y => y.age >= 18 && y.age <= 24).length;
+    const age25to30Count = youthProfiles.filter(y => y.age >= 25 && y.age <= 30).length;
+    const totalAgeGroups = age15to17Count + age18to24Count + age25to30Count || 1;
 
-  const highSchoolCount = youthProfiles.filter(y => {
-    const s = (y.educationalStatus || '').toLowerCase();
-    const l = (y.educationLevel || '').toLowerCase();
-    const b = (y.educationBackground || '').toLowerCase();
-    return s.includes('high school') || l.includes('high school') || b.includes('high school') || s.includes('grade') || s.includes('secondary');
-  }).length;
-  const collegeCount = youthProfiles.filter(y => {
-    const s = (y.educationalStatus || '').toLowerCase();
-    const l = (y.educationLevel || '').toLowerCase();
-    const b = (y.educationBackground || '').toLowerCase();
-    return s.includes('college') || l.includes('college') || b.includes('college') || s.includes('bachelor') || l.includes('bachelor') || s.includes('university') || l.includes('university');
-  }).length;
-  const vocationalCount = youthProfiles.filter(y => {
-    const s = (y.educationalStatus || '').toLowerCase();
-    const l = (y.educationLevel || '').toLowerCase();
-    const b = (y.educationBackground || '').toLowerCase();
-    return s.includes('vocational') || l.includes('vocational') || b.includes('vocational') || s.includes('smaw') || l.includes('smaw') || s.includes('welding') || l.includes('welding') || s.includes('skills');
-  }).length;
-  const otherEduCount = Math.max(0, youthProfiles.length - (highSchoolCount + collegeCount + vocationalCount));
-  const totalEdu = youthProfiles.length || 1;
-  const highSchoolPercent = Math.round((highSchoolCount / totalEdu) * 100);
-  const collegePercent = Math.round((collegeCount / totalEdu) * 100);
-  const vocationalPercent = Math.round((vocationalCount / totalEdu) * 100);
-  const otherEduPercent = Math.max(0, 100 - (highSchoolPercent + collegePercent + vocationalPercent));
+    const highSchoolCount = youthProfiles.filter(y => {
+      const s = (y.educationalStatus || '').toLowerCase();
+      const l = (y.educationLevel || '').toLowerCase();
+      const b = (y.educationBackground || '').toLowerCase();
+      return s.includes('high school') || l.includes('high school') || b.includes('high school') || s.includes('grade') || s.includes('secondary');
+    }).length;
+    const collegeCount = youthProfiles.filter(y => {
+      const s = (y.educationalStatus || '').toLowerCase();
+      const l = (y.educationLevel || '').toLowerCase();
+      const b = (y.educationBackground || '').toLowerCase();
+      return s.includes('college') || l.includes('college') || b.includes('college') || s.includes('bachelor') || l.includes('bachelor') || s.includes('university') || l.includes('university');
+    }).length;
+    const vocationalCount = youthProfiles.filter(y => {
+      const s = (y.educationalStatus || '').toLowerCase();
+      const l = (y.educationLevel || '').toLowerCase();
+      const b = (y.educationBackground || '').toLowerCase();
+      return s.includes('vocational') || l.includes('vocational') || b.includes('vocational') || s.includes('smaw') || l.includes('smaw') || s.includes('welding') || l.includes('welding') || s.includes('skills');
+    }).length;
+    const totalEdu = youthProfiles.length || 1;
+    const highSchoolPercent = Math.round((highSchoolCount / totalEdu) * 100);
+    const collegePercent = Math.round((collegeCount / totalEdu) * 100);
+    const vocationalPercent = Math.round((vocationalCount / totalEdu) * 100);
 
-  const avgParticipationRate = youthProfiles.length > 0
-    ? Math.round(youthProfiles.reduce((acc, y) => acc + (y.participationRate || 0), 0) / youthProfiles.length)
-    : 0;
+    const avgParticipationRate = youthProfiles.length > 0
+      ? Math.round(youthProfiles.reduce((acc, y) => acc + (y.participationRate || 0), 0) / youthProfiles.length)
+      : 0;
 
-  const totalPresent = programs.reduce((acc, p) => acc + (p.presentCount || 0), 0);
-  const totalRegistered = programs.reduce((acc, p) => acc + (p.registeredCount || 0), 0);
-  const avgAttendanceRate = totalRegistered > 0 ? Math.round((totalPresent / totalRegistered) * 100) : 0;
+    const totalPresent = programs.reduce((acc, p) => acc + (p.presentCount || 0), 0);
+    const totalRegistered = programs.reduce((acc, p) => acc + (p.registeredCount || 0), 0);
 
-  // Helper to compute Custom Builder Data
-  const getBuilderData = () => {
+    return {
+      maleCount,
+      femaleCount,
+      otherCount,
+      malePercent: Math.round((maleCount / totalGender) * 100),
+      femalePercent: Math.round((femaleCount / totalGender) * 100),
+      age15to17Count,
+      age18to24Count,
+      age25to30Count,
+      age15to17Percent: Math.round((age15to17Count / totalAgeGroups) * 100),
+      age18to24Percent: Math.round((age18to24Count / totalAgeGroups) * 100),
+      age25to30Percent: Math.round((age25to30Count / totalAgeGroups) * 100),
+      highSchoolCount,
+      collegeCount,
+      vocationalCount,
+      otherEduCount: Math.max(0, youthProfiles.length - (highSchoolCount + collegeCount + vocationalCount)),
+      highSchoolPercent,
+      collegePercent,
+      vocationalPercent,
+      otherEduPercent: Math.max(0, 100 - (highSchoolPercent + collegePercent + vocationalPercent)),
+      avgParticipationRate,
+      totalRegistered,
+      totalGender,
+      avgAttendanceRate: totalRegistered > 0 ? Math.round((totalPresent / totalRegistered) * 100) : 0,
+    };
+  }, [youthProfiles, programs]);
+
+  const { maleCount, femaleCount, otherCount, malePercent, femalePercent, age15to17Count, age18to24Count, age25to30Count, age15to17Percent, age18to24Percent, age25to30Percent, highSchoolCount, collegeCount, vocationalCount, otherEduCount, highSchoolPercent, collegePercent, vocationalPercent, otherEduPercent, avgParticipationRate, avgAttendanceRate, totalGender, totalRegistered } = dashboardStats;
+
+  // Custom Builder Data (memoized)
+  const builderData = useMemo(() => {
     let filtered = [...youthProfiles];
 
     filtered = filtered.filter(y => {
@@ -2053,10 +2129,9 @@ export default function App() {
       name,
       value: groups[name]
     })).sort((a, b) => b.value - a.value);
-  };
+  }, [youthProfiles, builderFilterAgeMin, builderFilterAgeMax, builderFilterGender, builderFilterPurok, builderFilterWorkStatus, builderFilterEducation, builderMetric, builderGrouping]);
 
-  const builderData = getBuilderData();
-  const builderTotalCount = builderData.reduce((acc, d) => acc + d.value, 0);
+  const builderTotalCount = useMemo(() => builderData.reduce((acc, d) => acc + d.value, 0), [builderData]);
 
 
   return (

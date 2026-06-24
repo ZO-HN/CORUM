@@ -46,6 +46,10 @@ const DocumentsView: React.FC<DocumentsViewProps> = ({
   setDocuments,
   logActivity,
 }) => {
+  const youthMap = React.useMemo(() => {
+    return new Map(youthProfiles.map(y => [y.id, y]));
+  }, [youthProfiles]);
+
   return (
             <div className="space-y-6">
               {/* Header Panel */}
@@ -113,7 +117,7 @@ const DocumentsView: React.FC<DocumentsViewProps> = ({
                     <tbody className="divide-y divide-[#353535]/10">
                       {(() => {
                         const filteredDocs = documents.filter(doc => {
-                          const owner = youthProfiles.find(y => y.id === doc.youthId);
+                          const owner = doc.youthId ? youthMap.get(doc.youthId) : undefined;
                           const ownerName = owner ? `${owner.firstName} ${owner.lastName}`.toLowerCase() : 'unknown';
                           const fileMatches = doc.fileName.toLowerCase().includes(documentSearch.toLowerCase()) || ownerName.includes(documentSearch.toLowerCase());
                           const typeMatches = documentTypeFilter === 'All' || doc.fileType === documentTypeFilter;
@@ -131,7 +135,7 @@ const DocumentsView: React.FC<DocumentsViewProps> = ({
                         }
 
                         return filteredDocs.map((doc) => {
-                          const owner = youthProfiles.find(y => y.id === doc.youthId);
+                          const owner = doc.youthId ? youthMap.get(doc.youthId) : undefined;
                           return (
                             <tr key={doc.id} className="hover:bg-surface-variant/20 transition-colors group">
                               <td className="px-6 py-4.5">
