@@ -12,5 +12,8 @@
     "dev:web": "npm run dev --workspace=web",
     "desktop:dev:exe": "npm run tauri dev --workspace=desktop",
     "desktop:build:exe": "npm run tauri build --workspace=desktop"
+  },
+  "devDependencies": {
+    "vercel": "^54.16.0"
   }
 }
