@@ -1,19 +1,48 @@
 # CORUM
 ### Kabataang Magkakaugnay. Pamayanang Maunlad.
 
-A Youth Information System or Governance Platform designed to help Sangguniang Kabataan (SK) officials through centralized youth profiling, analytics, program management, and data-driven decision-making.
+> **⚠️ PROTOTYPE / PROOF OF CONCEPT**
+> This project is currently in **active development** and is **not yet deployed for production use**. It serves as a working prototype to demonstrate the concept of a unified SK youth governance platform. Features may be incomplete, unstable, or subject to significant changes.
 
-This platform combines a desktop management application and a web-based registration portal that share a centralized cloud database, enabling efficient youth management, reporting, geographic insights, and community development planning.
-
----
-## Vision
-
-To provide every Barangay and Sangguniang Kabataan with a unified digital platform for managing youth information, planning impactful programs, and making evidence-based decisions for community development.(fr tho)
+![Status](https://img.shields.io/badge/Status-Prototype-orange)
+![Version](https://img.shields.io/badge/Version-0.1.0--alpha-blue)
+![License](https://img.shields.io/badge/License-Not%20Yet%20Licensed-lightgrey)
 
 ---
 
-## System Architecture
+## 📋 About
 
+CORUM is a **proof-of-concept** Youth Information System designed to explore how Sangguniang Kabataan (SK) officials could leverage technology for centralized youth profiling, analytics, program management, and data-driven decision-making.
+
+This prototype demonstrates the feasibility of combining a desktop management application with a web-based registration portal through a shared cloud database — intended to eventually enable efficient youth management, reporting, geographic insights, and community development planning.
+
+> **Note:** This is an academic/capstone-stage project. The current implementation represents our initial exploration of the concept and is not representative of a final product.
+
+---
+
+## 🎯 Vision
+
+To explore and validate the concept of providing every Barangay and Sangguniang Kabataan with a unified digital platform for managing youth information, planning impactful programs, and making evidence-based decisions for community development.
+
+---
+
+## 📌 Current Development Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Desktop App (Tauri) | 🟡 In Progress | Core UI scaffolded, key views under development |
+| Web Registration Portal | 🟡 In Progress | Basic registration flow implemented |
+| Supabase Backend | 🟡 In Progress | Initial schema defined, RLS policies being refined |
+| Dashboard & Analytics | 🔴 Early Stage | Placeholder charts, data pipeline not finalized |
+| GIS & Mapping | 🔴 Planned | Not yet implemented |
+| Program Management | 🔴 Planned | Not yet implemented |
+| Attendance Tracking | 🔴 Planned | Not yet implemented |
+
+---
+
+## 🏗️ Proposed System Architecture
+
+> *This diagram represents the **target architecture** — not all components are fully functional yet.*
 
 ```
 ┌───────────────────────────────┐
@@ -61,24 +90,35 @@ To provide every Barangay and Sangguniang Kabataan with a unified digital platfo
 
 ---
 
-## Key Features
+## ✅ Implemented Features (So Far)
 
-* **Dashboard:** Provides a quick overview of youth statistics, registrations, programs, events, and key performance indicators.
+* **Dashboard (WIP):** Basic overview of youth statistics and registrations — charts and KPIs are placeholder/demo data.
 
-* **Youth Profiling:** Maintains comprehensive youth records including personal information, education, employment status, skills, interests, and participation history.
+* **Youth Profiling (WIP):** Initial schema for youth records including personal information, education, and employment status.
 
-* **Registration Management:** Handles online youth registration, application review, validation, and approval workflows.
+* **Registration Management (WIP):** Basic online youth registration flow with review capabilities.
 
-* **Audit Logs:** Tracks user actions and system changes to ensure accountability and transparency.
+* **Audit Logs (Partial):** Framework for tracking user actions — logging coverage is incomplete.
 
-* **User Management:** Controls user accounts, permissions, and role-based access across the system.
+* **User Management (Partial):** Basic user accounts and role-based access scaffolding.
+
+---
+
+## 🚧 Known Limitations
+
+- **Not production-ready** — This prototype has not undergone security audits, performance testing, or accessibility compliance review.
+- **Demo data** — Some dashboard components use hardcoded or seeded sample data.
+- **Limited error handling** — Edge cases and failure scenarios are not fully covered.
+- **Single-barangay scope** — Multi-barangay support is planned but not yet implemented.
+- **No automated testing** — Unit and integration test suites have not been set up yet.
+- **Desktop builds are dev-only** — No signed or distributable installer has been produced.
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-kk-app/
+CORUM/
 ├── desktop/           # Tauri + React + TypeScript Desktop Admin App
 │   ├── src/           # Views, Layouts, Database Contexts, Hooks
 │   ├── src-tauri/     # Rust build & configuration for Tauri windowing
@@ -86,16 +126,17 @@ kk-app/
 ├── web/               # React + Vite Public Registration Web App
 │   ├── src/           # Sign-up forms, validation schema, secure syncer
 │   └── package.json   # Web portal configuration and scripts
+├── shared/            # Shared utilities and types across apps
 ├── supabase/          # Cloud Backend & Database Configuration
 │   └── migrations/    # SQL schemas (combined core, desktop, & web schemas)
-├── README.md          # Global documentation and quick start guide
+├── README.md          # This file
 ├── package.json       # Monorepo workspaces definition
 └── package-lock.json  # Dependency lock file
 ```
 
 ---
 
-##  Technology Stack
+## 🛠️ Technology Stack
 
 * **Frontend Framework:** React 19, TypeScript
 * **Build Tools:** Vite 8, Tauri 2 (Desktop wrapper)
@@ -106,7 +147,9 @@ kk-app/
 
 ---
 
-##  Getting Started
+## 🚀 Getting Started (Development)
+
+> ⚠️ These instructions are for **local development and testing only**. This project is not ready for deployment.
 
 ### 1. Prerequisites
 
@@ -121,8 +164,8 @@ Clone the repository and install dependencies from the root directory:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/kk-app.git
-cd kk-app
+git clone https://github.com/ZO-HN/CORUM.git
+cd CORUM
 
 # Install monorepo dependencies
 npm install
@@ -144,7 +187,7 @@ VITE_CACHE_SECRET=your-aes-cache-passphrase
 
 ---
 
-##  Running the App
+## ▶️ Running the App (Dev Mode)
 
 Run the workspace scripts from the root directory:
 
@@ -158,13 +201,13 @@ npm run dev:web
 # Run Tauri dev environment (starts native desktop wrapper)
 npm run desktop:dev:exe
 
-# Build Tauri executable installer
+# Build Tauri executable installer (dev builds only)
 npm run desktop:build:exe
 ```
 
 ---
 
-##  Database Migrations
+## 🗄️ Database Migrations
 
 Apply database migrations to your Supabase instance:
 
@@ -177,9 +220,40 @@ The database initialization schema is located in `supabase/migrations/2026052900
 
 ---
 
-## Security & PII Protection
+## 🔐 Security & PII Protection (Planned)
 
-All sensitive local data is kept safe using the `secureCache` utility layer.
+> **Note:** The security measures below are implemented at a basic level. A full security audit has **not** been conducted. Do not use this prototype with real personal data.
+
+The `secureCache` utility layer provides baseline local data protection:
 1. The app derives a key using a random device salt combined with `VITE_CACHE_SECRET`.
 2. All inputs containing user profiles are encrypted via `SubtleCrypto.encrypt()` using `AES-GCM`.
 3. Logging out automatically wipes all PII cache keys (`kk_youth_profiles`, `kk_web_submissions`, `kk_current_user`, `kk_offline_queue`) from the browser's storage.
+
+---
+
+## 🗺️ Roadmap
+
+This is a rough plan for future development — timelines are tentative:
+
+- [ ] Complete core desktop dashboard with live data
+- [ ] Finalize web registration portal with full validation
+- [ ] Implement program & event management modules
+- [ ] Add GIS mapping for youth geographic distribution
+- [ ] Implement attendance tracking system
+- [ ] Set up automated testing (unit + integration)
+- [ ] Conduct security audit & hardening
+- [ ] Multi-barangay support
+- [ ] Produce signed desktop installer for pilot deployment
+- [ ] Pilot testing with a partner barangay SK council
+
+---
+
+## 🤝 Contributing
+
+This project is in its early stages. If you're interested in contributing or have feedback, feel free to open an issue or reach out.
+
+---
+
+<p align="center">
+  <sub>🚧 This is a prototype under active development — not a production system. 🚧</sub>
+</p>
