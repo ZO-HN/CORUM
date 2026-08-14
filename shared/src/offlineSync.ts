@@ -1,16 +1,8 @@
 // syncs offline changes back to supabase.
 // processes mutations in order with a small delay to avoid rate limits.
 
-import { createClient } from '@supabase/supabase-js';
 import { getSecureCache, setSecureCache } from './secureCache';
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
-export const supabase = isSupabaseConfigured
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-  : null;
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 
 export interface OfflineMutation {
   id: string;

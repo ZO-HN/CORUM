@@ -183,6 +183,18 @@ CREATE TABLE IF NOT EXISTS public.registration_submissions (
 
 ALTER TABLE public.registration_submissions ENABLE ROW LEVEL SECURITY;
 
+-- resident portal login throttling (keyed by email; only touched via the
+-- SECURITY DEFINER verify_resident_access() function below)
+CREATE TABLE IF NOT EXISTS public.resident_access_attempts (
+    email TEXT PRIMARY KEY,
+    failed_count INT NOT NULL DEFAULT 0,
+    first_failed_at TIMESTAMP WITH TIME ZONE,
+    locked_until TIMESTAMP WITH TIME ZONE
+);
+
+ALTER TABLE public.resident_access_attempts ENABLE ROW LEVEL SECURITY;
+-- deliberately no policies: not reachable directly by anon/authenticated roles
+
 
 -- performance indexes
 CREATE INDEX IF NOT EXISTS idx_youth_profiles_status_purok ON public.youth_profiles (status, purok);
@@ -311,6 +323,7 @@ REVOKE SELECT ON public.attendance            FROM anon;
 REVOKE SELECT ON public.documents             FROM anon;
 REVOKE SELECT ON public.registration_submissions FROM anon;
 REVOKE SELECT ON public.system_config         FROM anon;
+REVOKE ALL ON public.resident_access_attempts FROM anon, authenticated;
 
 GRANT INSERT ON public.registration_submissions TO anon;
 
@@ -331,20 +344,22 @@ CREATE TRIGGER set_updated_at_programs BEFORE UPDATE ON public.programs FOR EACH
 CREATE TRIGGER set_updated_at_registration_submissions BEFORE UPDATE ON public.registration_submissions FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- logs changes to audit table
+-- otp_code is stripped before storage since audit_logs is readable by any
+-- admin (al_admins_select) and otp_code is a live credential, not history.
 CREATE OR REPLACE FUNCTION public.process_audit_logging()
 RETURNS TRIGGER AS $$
 BEGIN
     IF (TG_OP = 'DELETE') THEN
         INSERT INTO public.audit_logs(user_id, action, table_name, old_values)
-        VALUES (auth.uid(), 'DELETE', TG_TABLE_NAME, row_to_json(OLD)::jsonb);
+        VALUES (auth.uid(), 'DELETE', TG_TABLE_NAME, row_to_json(OLD)::jsonb - 'otp_code');
         RETURN OLD;
     ELSIF (TG_OP = 'UPDATE') THEN
         INSERT INTO public.audit_logs(user_id, action, table_name, old_values, new_values)
-        VALUES (auth.uid(), 'UPDATE', TG_TABLE_NAME, row_to_json(OLD)::jsonb, row_to_json(NEW)::jsonb);
+        VALUES (auth.uid(), 'UPDATE', TG_TABLE_NAME, row_to_json(OLD)::jsonb - 'otp_code', row_to_json(NEW)::jsonb - 'otp_code');
         RETURN NEW;
     ELSIF (TG_OP = 'INSERT') THEN
         INSERT INTO public.audit_logs(user_id, action, table_name, new_values)
-        VALUES (auth.uid(), 'INSERT', TG_TABLE_NAME, row_to_json(NEW)::jsonb);
+        VALUES (auth.uid(), 'INSERT', TG_TABLE_NAME, row_to_json(NEW)::jsonb - 'otp_code');
         RETURN NEW;
     END IF;
     RETURN NULL;
@@ -416,9 +431,21 @@ DECLARE
     v_attendance_logs JSONB;
     v_participation_rate INT;
     v_profile_json JSONB;
+    v_email TEXT := LOWER(TRIM(p_email));
+    v_attempt RECORD;
+    v_max_attempts CONSTANT INT := 5;
+    v_window INTERVAL := INTERVAL '15 minutes';
+    v_lockout INTERVAL := INTERVAL '15 minutes';
 BEGIN
+    -- throttle: block if this email is currently locked out
+    SELECT * INTO v_attempt FROM public.resident_access_attempts WHERE email = v_email FOR UPDATE;
+    IF FOUND AND v_attempt.locked_until IS NOT NULL AND v_attempt.locked_until > now() THEN
+        RAISE EXCEPTION 'RATE_LIMITED: Too many attempts. Try again after %.', to_char(v_attempt.locked_until, 'HH12:MI AM')
+            USING ERRCODE = 'P0001';
+    END IF;
+
     -- look in profiles
-    SELECT * INTO v_profile FROM public.youth_profiles WHERE LOWER(email) = LOWER(p_email) LIMIT 1;
+    SELECT * INTO v_profile FROM public.youth_profiles WHERE LOWER(email) = v_email LIMIT 1;
     IF FOUND THEN
         v_expected_passcode := to_char(v_profile.date_of_birth, 'MMDDYYYY');
         IF p_passcode = v_expected_passcode OR (v_profile.otp_code IS NOT NULL AND p_passcode = v_profile.otp_code) THEN
@@ -451,6 +478,8 @@ BEGIN
                 'participation_rate', v_participation_rate
             );
 
+            DELETE FROM public.resident_access_attempts WHERE email = v_email;
+
             RETURN jsonb_build_object(
                 'type', 'synced_profile',
                 'profile', v_profile_json
@@ -459,16 +488,45 @@ BEGIN
     END IF;
 
     -- look in pending submissions
-    SELECT * INTO v_submission FROM public.registration_submissions WHERE LOWER(form_data->>'email') = LOWER(p_email) LIMIT 1;
+    SELECT * INTO v_submission FROM public.registration_submissions WHERE LOWER(form_data->>'email') = v_email LIMIT 1;
     IF FOUND THEN
         v_expected_passcode := to_char(to_date(v_submission.form_data->>'dob', 'YYYY-MM-DD'), 'MMDDYYYY');
         IF p_passcode = v_expected_passcode THEN
+            DELETE FROM public.resident_access_attempts WHERE email = v_email;
+
             RETURN jsonb_build_object(
                 'type', 'pending_submission',
                 'submission', row_to_json(v_submission)::jsonb
             );
         END IF;
     END IF;
+
+    -- record the failed attempt and lock out after too many within the window
+    INSERT INTO public.resident_access_attempts (email, failed_count, first_failed_at, locked_until)
+    VALUES (v_email, 1, now(), NULL)
+    ON CONFLICT (email) DO UPDATE SET
+        failed_count = CASE
+            WHEN public.resident_access_attempts.first_failed_at IS NULL
+                 OR public.resident_access_attempts.first_failed_at < now() - v_window
+            THEN 1
+            ELSE public.resident_access_attempts.failed_count + 1
+        END,
+        first_failed_at = CASE
+            WHEN public.resident_access_attempts.first_failed_at IS NULL
+                 OR public.resident_access_attempts.first_failed_at < now() - v_window
+            THEN now()
+            ELSE public.resident_access_attempts.first_failed_at
+        END,
+        locked_until = CASE
+            WHEN (CASE
+                    WHEN public.resident_access_attempts.first_failed_at IS NULL
+                         OR public.resident_access_attempts.first_failed_at < now() - v_window
+                    THEN 1
+                    ELSE public.resident_access_attempts.failed_count + 1
+                  END) >= v_max_attempts
+            THEN now() + v_lockout
+            ELSE NULL
+        END;
 
     RETURN NULL;
 END;

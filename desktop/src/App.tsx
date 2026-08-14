@@ -49,6 +49,7 @@ import {
 } from 'recharts';
 import * as db from './lib/db';
 import { purgeAllPiiCache, useNetworkStatus, clearOfflineQueue, ErrorBoundary } from 'shared';
+import { hashPassword, verifyPassword, generateTempPassword } from './lib/localAuth';
 import Dashboard from './components/Dashboard';
 import { z } from 'zod';
 import LoginPage from './components/LoginPage';
@@ -168,6 +169,7 @@ export default function App() {
     role: db.SystemUserRole;
     email: string;
     status: 'Active' | 'Disabled';
+    passwordHash?: string;
   }
 
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -348,6 +350,7 @@ export default function App() {
   const [newUserName, setNewUserName] = useState<string>('');
   const [newUserEmail, setNewUserEmail] = useState<string>('');
   const [newUserRole, setNewUserRole] = useState<db.SystemUserRole>('Staff');
+  const [newUserPassword, setNewUserPassword] = useState<string>('');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState<boolean>(false);
 
@@ -537,10 +540,17 @@ export default function App() {
             return;
           }
         } else {
-          const newUserId = await db.createSystemUser(newUserEmail.trim(), newUserRole, newUserName.trim());
+          const tempPassword = generateTempPassword();
+          const newUserId = await db.createSystemUser(newUserEmail.trim(), newUserRole, tempPassword, newUserName.trim());
           if (newUserId) {
             logActivity('INSERT', 'users_ledger', null, { id: newUserId, email: newUserEmail.trim(), role: newUserRole });
             setScanNotification({ message: "SUCCESS: New system user created!", type: 'success' });
+            alert(
+              `Account created for ${newUserEmail.trim()}.\n\n` +
+              `Temporary password: ${tempPassword}\n\n` +
+              `Share this with the new user through a secure channel — it will not be shown again. ` +
+              `They should change it immediately after logging in via Settings > Account.`
+            );
           } else {
             alert("Failed to create system user on the database. Make sure the email is unique.");
             return;
@@ -556,36 +566,51 @@ export default function App() {
     } else {
       let updatedUsers = [...users];
       const oldValues = [...users];
-      
+
       if (editingUserId) {
+        let passwordHash = users.find(u => u.id === editingUserId)?.passwordHash;
+        if (newUserPassword.trim()) {
+          if (newUserPassword.trim().length < 8) {
+            alert("Password must be at least 8 characters long.");
+            return;
+          }
+          passwordHash = await hashPassword(newUserPassword.trim());
+        }
         updatedUsers = users.map(u => u.id === editingUserId ? {
           ...u,
           name: newUserName.trim(),
           email: newUserEmail.trim(),
-          role: newUserRole
+          role: newUserRole,
+          passwordHash
         } : u);
         logActivity('UPDATE', 'users_ledger', oldValues, updatedUsers);
         setScanNotification({ message: "SUCCESS: Staff user profile updated!", type: 'success' });
       } else {
+        if (!newUserPassword.trim() || newUserPassword.trim().length < 8) {
+          alert("A password of at least 8 characters is required to create an offline account.");
+          return;
+        }
         const newUser: UserRecord = {
           id: `usr-${Date.now()}`,
           name: newUserName.trim(),
           email: newUserEmail.trim(),
           role: newUserRole,
-          status: 'Active'
+          status: 'Active',
+          passwordHash: await hashPassword(newUserPassword.trim())
         };
         updatedUsers = [...users, newUser];
-        logActivity('INSERT', 'users_ledger', null, newUser);
+        logActivity('INSERT', 'users_ledger', null, { ...newUser, passwordHash: undefined });
         setScanNotification({ message: "SUCCESS: New staff user created!", type: 'success' });
       }
-      
+
       setUsers(updatedUsers);
       localStorage.setItem('kk_users', JSON.stringify(updatedUsers));
     }
-    
+
     setNewUserName('');
     setNewUserEmail('');
     setNewUserRole('Staff');
+    setNewUserPassword('');
     setEditingUserId(null);
     setIsUserModalOpen(false);
   };
@@ -874,10 +899,23 @@ export default function App() {
           // fetchUserRole handles loading roles and setting isAuthenticated to true
         }
       } else {
-        const foundUser = users.find(u => u.email.toLowerCase() === emailInput.toLowerCase() || u.name.toLowerCase() === identifier.toLowerCase());
-        
-        if (foundUser && foundUser.role === 'Admin') {
-          // offline bypass
+        const savedUsers: UserRecord[] = (() => {
+          try {
+            const saved = localStorage.getItem('kk_users');
+            return saved ? JSON.parse(saved) : [];
+          } catch (_) {
+            return [];
+          }
+        })();
+        const foundUser = savedUsers.find(u =>
+          (u.email.toLowerCase() === emailInput.toLowerCase() || u.name.toLowerCase() === identifier.toLowerCase())
+          && u.status === 'Active'
+        );
+
+        const passwordOk = foundUser ? await verifyPassword(password, foundUser.passwordHash) : false;
+
+        if (foundUser && foundUser.role === 'Admin' && passwordOk) {
+          setUsers(savedUsers);
           setCurrentUser(foundUser);
           localStorage.setItem('kk_current_user', JSON.stringify(foundUser));
           localStorage.setItem('kk_desktop_auth', 'true');
@@ -2398,6 +2436,8 @@ export default function App() {
               setNewUserEmail={setNewUserEmail}
               newUserRole={newUserRole}
               setNewUserRole={setNewUserRole}
+              newUserPassword={newUserPassword}
+              setNewUserPassword={setNewUserPassword}
               editingUserId={editingUserId}
               setEditingUserId={setEditingUserId}
               onCreateOrUpdateUser={handleCreateOrUpdateUser}
