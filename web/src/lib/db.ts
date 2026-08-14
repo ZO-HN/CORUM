@@ -1,29 +1,35 @@
-import {
-  getSecureCache,
-  setSecureCache,
+import { createClient } from '@supabase/supabase-js';
+import { 
+  getSecureCache, 
+  setSecureCache, 
   enqueueMutation,
   initialYouthProfiles,
   initialPrograms,
-  initialSubmissions,
-  supabase as sharedSupabase,
-  isSupabaseConfigured as sharedIsSupabaseConfigured
+  initialSubmissions
 } from 'shared';
-import type {
-  YouthProfile,
-  Program,
-  AttendanceRecord,
-  RegistrationSubmission
+import type { 
+  YouthProfile, 
+  Program, 
+  AttendanceRecord, 
+  RegistrationSubmission 
 } from 'shared';
 
-export type {
-  YouthProfile,
-  Program,
-  AttendanceRecord,
-  RegistrationSubmission
+export type { 
+  YouthProfile, 
+  Program, 
+  AttendanceRecord, 
+  RegistrationSubmission 
 };
 
-export const supabase = sharedSupabase;
-export const isSupabaseConfigured = sharedIsSupabaseConfigured;
+// env credentials config
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+export const supabase = isSupabaseConfigured
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
 
 // persistence helpers using aes-gcm encryption
 const getLocalData = async <T>(key: string, initialData: T[]): Promise<T[]> => {
@@ -467,10 +473,6 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
 
       if (error) {
         console.error("Error executing verify_resident_access RPC on Supabase:", error);
-        if (typeof error.message === 'string' && error.message.includes('RATE_LIMITED')) {
-          const friendly = error.message.replace(/^.*RATE_LIMITED:\s*/, '');
-          throw new Error(`RATE_LIMITED_MARKER:${friendly}`);
-        }
       } else if (data) {
         if (data.type === 'synced_profile' && data.profile) {
           const p = data.profile;
@@ -564,9 +566,6 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
       }
       return null;
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith('RATE_LIMITED_MARKER:')) {
-        throw new Error(err.message.replace('RATE_LIMITED_MARKER:', ''));
-      }
       console.error("verify_resident_access RPC exception:", err);
     }
   }

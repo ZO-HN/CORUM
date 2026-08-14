@@ -438,7 +438,7 @@ export default function App() {
       setLoginError("Incorrect username or password.");
     } catch (err) {
       console.error(err);
-      setLoginError(err instanceof Error && err.message ? err.message : "An error occurred during authentication. Please retry.");
+      setLoginError("An error occurred during authentication. Please retry.");
     } finally {
       setIsAuthenticating(false);
     }

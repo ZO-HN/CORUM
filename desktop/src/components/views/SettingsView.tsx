@@ -22,7 +22,6 @@ interface UserRecord {
   role: UserRole;
   email: string;
   status: 'Active' | 'Disabled';
-  passwordHash?: string;
 }
 
 export interface SettingsViewProps {
@@ -73,8 +72,6 @@ export interface SettingsViewProps {
   setNewUserEmail: (v: string) => void;
   newUserRole: UserRole;
   setNewUserRole: (v: UserRole) => void;
-  newUserPassword: string;
-  setNewUserPassword: (v: string) => void;
   editingUserId: string | null;
   setEditingUserId: (v: string | null) => void;
   onCreateOrUpdateUser: (e: React.FormEvent) => void;
@@ -150,8 +147,6 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
     setNewUserEmail,
     newUserRole,
     setNewUserRole,
-    newUserPassword,
-    setNewUserPassword,
     editingUserId,
     setEditingUserId,
     onCreateOrUpdateUser,
@@ -578,7 +573,6 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                               setNewUserName('');
                               setNewUserEmail('');
                               setNewUserRole('Staff');
-                              setNewUserPassword('');
                               setIsUserModalOpen(true);
                             }}
                             disabled={!isSettingsUnlocked}
@@ -676,7 +670,6 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                                             setNewUserName(u.name);
                                             setNewUserEmail(u.email);
                                             setNewUserRole(u.role);
-                                            setNewUserPassword('');
                                             setIsUserModalOpen(true);
                                           }}
                                           disabled={!isSettingsUnlocked}
@@ -729,7 +722,6 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                                   setNewUserName('');
                                   setNewUserEmail('');
                                   setNewUserRole('Staff');
-                                  setNewUserPassword('');
                                   setIsUserModalOpen(false);
                                 }}
                                 className="p-1 hover:bg-surface-container-highest rounded-lg transition-colors text-on-surface-variant hover:text-on-surface"
@@ -780,31 +772,14 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                                 </select>
                               </div>
 
-                              <div className="space-y-1.5">
-                                <label className="text-xs font-semibold text-on-surface-variant">
-                                  {editingUserId ? "New Password (leave blank to keep current)" : "Password"}
-                                </label>
-                                <input
-                                  type="password"
-                                  required={!editingUserId}
-                                  minLength={8}
-                                  value={newUserPassword}
-                                  onChange={(e) => setNewUserPassword(e.target.value)}
-                                  className="w-full bg-[#181818] border border-outline-variant/10 rounded-xl py-2.5 px-3.5 text-xs text-on-surface focus:ring-1 focus:ring-primary"
-                                  placeholder="Minimum 8 characters"
-                                  autoComplete="new-password"
-                                />
-                              </div>
-
                               <div className="flex justify-end gap-3 border-t border-[#353535]/10 pt-4 mt-6">
-                                <button
+                                <button 
                                   type="button"
                                   onClick={() => {
                                     setEditingUserId(null);
                                     setNewUserName('');
                                     setNewUserEmail('');
                                     setNewUserRole('Staff');
-                                    setNewUserPassword('');
                                     setIsUserModalOpen(false);
                                   }}
                                   className="px-4 py-2 bg-[#181818] text-on-surface rounded-lg font-bold text-xs hover:bg-[#202020] transition-all"

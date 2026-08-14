@@ -1,29 +1,35 @@
-import {
-  getSecureCache,
-  setSecureCache,
+import { createClient } from '@supabase/supabase-js';
+import { 
+  getSecureCache, 
+  setSecureCache, 
   enqueueMutation,
   initialYouthProfiles,
   initialPrograms,
-  initialSubmissions,
-  supabase as sharedSupabase,
-  isSupabaseConfigured as sharedIsSupabaseConfigured
+  initialSubmissions
 } from 'shared';
-import type {
-  YouthProfile,
-  Program,
-  AttendanceRecord,
-  RegistrationSubmission
+import type { 
+  YouthProfile, 
+  Program, 
+  AttendanceRecord, 
+  RegistrationSubmission 
 } from 'shared';
 
-export type {
-  YouthProfile,
-  Program,
-  AttendanceRecord,
-  RegistrationSubmission
+export type { 
+  YouthProfile, 
+  Program, 
+  AttendanceRecord, 
+  RegistrationSubmission 
 };
 
-export const supabase = sharedSupabase;
-export const isSupabaseConfigured = sharedIsSupabaseConfigured;
+// env credentials config
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+export const supabase = isSupabaseConfigured
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
 
 // persistence helpers using aes-gcm encryption
 const getLocalData = async <T>(key: string, initialData: T[]): Promise<T[]> => {
@@ -880,13 +886,13 @@ export const getSystemUsers = async (): Promise<SystemUser[]> => {
   return [];
 };
 
-export const createSystemUser = async (email: string, role: string, password: string, displayName?: string): Promise<string | null> => {
+export const createSystemUser = async (email: string, role: string, displayName?: string): Promise<string | null> => {
   if (isSupabaseConfigured && supabase) {
     try {
       const dbRole = role.toLowerCase();
       const { data, error } = await supabase.rpc('create_system_user', {
         p_email: email,
-        p_password: password,
+        p_password: 'Password123',
         p_role: dbRole,
         p_display_name: displayName || null
       });
