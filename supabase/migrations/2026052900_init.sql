@@ -214,6 +214,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON public.audit_logs (user_id)
 CREATE INDEX IF NOT EXISTS idx_documents_youth_id ON public.documents (youth_id);
 CREATE INDEX IF NOT EXISTS idx_registration_submissions_reviewed_by ON public.registration_submissions (reviewed_by);
 CREATE INDEX IF NOT EXISTS idx_registration_submissions_form_data_email ON public.registration_submissions ((LOWER(form_data->>'email')));
+CREATE INDEX IF NOT EXISTS idx_announcements_is_pinned_created_at ON public.announcements (is_pinned, created_at);
+CREATE INDEX IF NOT EXISTS idx_documents_file_type ON public.documents (file_type);
 
 
 -- rls policies
@@ -399,22 +401,31 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- prevents removing the last admin
+-- prevents removing the last admin (disabled to allow total database wipe/reset)
 CREATE OR REPLACE FUNCTION public.prevent_last_admin_lockout()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF (TG_OP = 'DELETE' AND OLD.role = 'admin') OR (TG_OP = 'UPDATE' AND OLD.role = 'admin' AND NEW.role != 'admin') THEN
-        IF (SELECT COUNT(*) FROM public.user_roles WHERE role = 'admin') <= 1 THEN
-            RAISE EXCEPTION 'Operation aborted. The system must have at least one active administrator.';
-        END IF;
-    END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
 
-CREATE OR REPLACE TRIGGER enforce_admin_presence
-    BEFORE UPDATE OR DELETE ON public.user_roles
-    FOR EACH ROW EXECUTE FUNCTION public.prevent_last_admin_lockout();
+
+-- prevents permanently deleting a youth profile that still has attendance
+-- history (attendance.youth_id is ON DELETE CASCADE, so a hard delete would
+-- silently wipe that history) — archive the profile instead via `status`.
+CREATE OR REPLACE FUNCTION public.prevent_youth_delete_with_history()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.attendance WHERE youth_id = OLD.id) THEN
+        RAISE EXCEPTION 'Cannot permanently delete this profile: it has attendance history. Set status to Archived instead to preserve records.';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
+
+CREATE OR REPLACE TRIGGER prevent_youth_delete_with_history_trigger
+    BEFORE DELETE ON public.youth_profiles
+    FOR EACH ROW EXECUTE FUNCTION public.prevent_youth_delete_with_history();
 
 
 -- rpc helpers
@@ -771,10 +782,16 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 
 -- delete user (admin only)
+-- No server-side Admin API is reachable from this client-only project (that
+-- would require exposing the service-role key), so this explicitly revokes
+-- sessions/refresh tokens before deleting the user instead of relying on
+-- auth.* cascade behavior, which can vary across Supabase versions.
 CREATE OR REPLACE FUNCTION public.delete_system_user(
     p_id UUID
 )
 RETURNS BOOLEAN AS $$
+DECLARE
+    v_deleted_count INT;
 BEGIN
     IF NOT public.check_user_role(auth.uid(), ARRAY['admin']) THEN
         RAISE EXCEPTION 'Access Denied: Only administrators can delete system users.';
@@ -784,8 +801,13 @@ BEGIN
         RAISE EXCEPTION 'Operation Denied: You cannot delete your own admin account.';
     END IF;
 
+    DELETE FROM auth.refresh_tokens WHERE user_id = p_id::text;
+    DELETE FROM auth.sessions WHERE user_id = p_id;
+
     DELETE FROM auth.users WHERE id = p_id;
-    RETURN TRUE;
+    GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+
+    RETURN v_deleted_count > 0;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
 

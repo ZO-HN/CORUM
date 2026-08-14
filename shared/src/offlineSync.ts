@@ -3,11 +3,12 @@
 
 import { getSecureCache, setSecureCache } from './secureCache';
 import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { mapDbRowToProfileFields } from './profileMapper';
 
 export interface OfflineMutation {
   id: string;
-  operation: 'INSERT' | 'UPDATE';
-  table: 'youth_profiles' | 'programs' | 'registration_submissions';
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  table: 'youth_profiles' | 'programs' | 'registration_submissions' | 'documents';
   recordId: string;
   payload: any;
   localUpdatedAt: string;
@@ -38,7 +39,7 @@ function notifyListeners() {
 
 // queue up local changes to sync later
 export async function enqueueMutation(
-  operation: 'INSERT' | 'UPDATE',
+  operation: OfflineMutation['operation'],
   table: OfflineMutation['table'],
   recordId: string,
   payload: any
@@ -172,6 +173,12 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
 
     if (localTime < remoteTime) {
       console.warn(`LWW Conflict: Remote record in ${table} (${recordId}) is newer (${remoteData.updated_at}) than local update (${localUpdatedAt}). Discarding local update.`);
+      await logSyncEventToServer('SYNC_CONFLICT_DISCARD', table, {
+        recordId,
+        localUpdatedAt,
+        remoteUpdatedAt: remoteData.updated_at,
+        note: 'Local offline change discarded — remote record was newer (last-write-wins).'
+      });
       await updateLocalRecord(table, recordId, remoteData);
       return true;
     }
@@ -190,16 +197,12 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         return false;
       }
     } else {
-      const insertPayload = { ...payload };
-      const isMockId = recordId.startsWith('PROG-') || recordId.startsWith('SUB-');
-      if (isMockId) {
-        delete insertPayload.id;
-      } else {
-        insertPayload.id = recordId;
-      }
-      insertPayload.updated_at = localUpdatedAt;
+      // record IDs are always client-generated UUIDs (crypto.randomUUID()),
+      // matching what's already stored in the local cache, so the insert
+      // uses that same id rather than letting the DB generate a new one.
+      const insertPayload = { ...payload, id: recordId, updated_at: localUpdatedAt };
 
-      const { data: insertedData, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from(table)
         .insert(insertPayload)
         .select()
@@ -210,23 +213,12 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         if (isTransientError(insertError)) throw insertError;
         return false;
       }
-
-      if (insertedData && isMockId) {
-        await replaceLocalMockId(table, recordId, insertedData);
-      }
     }
   } else if (operation === 'UPDATE') {
     if (!remoteData) {
-      const insertPayload = { ...payload };
-      const isMockId = recordId.startsWith('PROG-') || recordId.startsWith('SUB-');
-      if (isMockId) {
-        delete insertPayload.id;
-      } else {
-        insertPayload.id = recordId;
-      }
-      insertPayload.updated_at = localUpdatedAt;
+      const insertPayload = { ...payload, id: recordId, updated_at: localUpdatedAt };
 
-      const { data: insertedData, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from(table)
         .insert(insertPayload)
         .select()
@@ -236,10 +228,6 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         console.error(`Sync update-as-insert error for ${table}/${recordId}:`, insertError);
         if (isTransientError(insertError)) throw insertError;
         return false;
-      }
-
-      if (insertedData && isMockId) {
-        await replaceLocalMockId(table, recordId, insertedData);
       }
     } else {
       const { error: updateError } = await supabase
@@ -253,6 +241,20 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
         return false;
       }
     }
+  } else if (operation === 'DELETE') {
+    if (remoteData) {
+      const { error: deleteError } = await supabase
+        .from(table)
+        .delete()
+        .eq('id', recordId);
+
+      if (deleteError) {
+        console.error(`Sync delete error for ${table}/${recordId}:`, deleteError);
+        if (isTransientError(deleteError)) throw deleteError;
+        return false;
+      }
+    }
+    // remoteData already gone — delete is idempotent, nothing to do
   }
 
   return true;
@@ -265,48 +267,6 @@ function isTransientError(error: any): boolean {
     return true;
   }
   return false;
-}
-
-function mapDbProfileToClient(p: any): any {
-  return {
-    id: p.id,
-    firstName: p.first_name,
-    lastName: p.last_name,
-    middleName: p.middle_name,
-    age: p.age,
-    gender: p.gender,
-    dob: p.date_of_birth,
-    civilStatus: p.civil_status,
-    bloodType: p.blood_type,
-    nationality: p.nationality,
-    contactNumber: p.contact_number,
-    email: p.email,
-    additionalEmail: p.additional_email || '',
-    address: p.home_address,
-    purok: p.purok,
-    isRegisteredVoter: p.is_registered_voter,
-    precinctNumber: p.precinct_number,
-    educationLevel: p.education_level,
-    educationalStatus: p.educational_status,
-    scholarshipStatus: p.scholarship_status,
-    youthClassification: p.youth_classification || '',
-    workStatus: p.work_status || '',
-    workSpecify: p.work_specify || '',
-    educationBackground: p.education_background || '',
-    educationSpecify: p.education_specify || '',
-    hasScholarship: p.has_scholarship || '',
-    scholarshipSpecify: p.scholarship_specify || '',
-    participatedLastKKElection: p.participated_last_kk_election || '',
-    attendedKKAssembly: p.attended_kk_assembly || '',
-    kkAssemblyCount: p.kk_assembly_count || 0,
-    skills: p.skills || [],
-    facebookLink: p.facebook_link || '',
-    avatarUrl: p.profile_picture_url || '',
-    status: p.status,
-    participationRate: 90,
-    joinedDate: p.joined_date ? new Date(p.joined_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
-    attendanceLogs: []
-  };
 }
 
 function mapDbProgramToClient(p: any): any {
@@ -340,7 +300,7 @@ async function updateLocalRecord(table: string, recordId: string, remoteRecord: 
   
   if (table === 'youth_profiles') {
     cacheKey = 'kk_youth_profiles';
-    mapper = mapDbProfileToClient;
+    mapper = mapDbRowToProfileFields;
   } else if (table === 'programs') {
     cacheKey = 'kk_programs';
     mapper = mapDbProgramToClient;
@@ -359,42 +319,46 @@ async function updateLocalRecord(table: string, recordId: string, remoteRecord: 
   }
 }
 
-async function replaceLocalMockId(table: string, mockId: string, remoteRecord: any) {
-  let cacheKey = '';
-  let mapper: (item: any) => any;
-
-  if (table === 'programs') {
-    cacheKey = 'kk_programs';
-    mapper = mapDbProgramToClient;
-  } else if (table === 'registration_submissions') {
-    cacheKey = 'kk_web_submissions';
-    mapper = mapDbSubmissionToClient;
-  } else {
-    return;
-  }
-
-  const list = await getSecureCache<any[]>(cacheKey, []);
-  const idx = list.findIndex((x: any) => x.id === mockId);
-  if (idx !== -1) {
-    list[idx] = mapper(remoteRecord);
-    await setSecureCache(cacheKey, list);
+// Best-effort write to the server audit_logs table, so admins reviewing
+// history from a different device can see sync conflicts/failures that
+// happened on this one. Requires an authenticated admin/staff session
+// (al_allow_admin_staff_insert RLS policy) — silently skipped otherwise,
+// e.g. anonymous resident sessions on the web portal, which always fall
+// back to the local-only log below.
+async function logSyncEventToServer(action: string, tableName: string, details: any) {
+  if (!supabase) return;
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return;
+    await supabase.from('audit_logs').insert({
+      user_id: userData.user.id,
+      action,
+      table_name: tableName,
+      new_values: details
+    });
+  } catch (err) {
+    console.error('Failed to write sync event to server audit_logs:', err);
   }
 }
 
 async function saveSyncFailureAuditLog(item: OfflineMutation) {
+  const errorDetails = {
+    queueId: item.id,
+    recordId: item.recordId,
+    operation: item.operation,
+    payloadSize: JSON.stringify(item.payload).length,
+    error: `Sync failed after 3 retries. Record discarded.`
+  };
+
+  await logSyncEventToServer('SYNC_FAILURE', item.table, errorDetails);
+
   const logs = await getSecureCache<any[]>('kk_audit_logs', []);
   const fullLog = {
     id: `LOG-${Math.floor(Math.random() * 900000) + 100000}`,
     action: 'SYNC_FAILURE',
     table_name: item.table,
     old_values: null,
-    new_values: {
-      queueId: item.id,
-      recordId: item.recordId,
-      operation: item.operation,
-      payloadSize: JSON.stringify(item.payload).length,
-      error: `Sync failed after 3 retries. Record discarded.`
-    },
+    new_values: errorDetails,
     created_at: new Date().toISOString()
   };
   logs.unshift(fullLog);

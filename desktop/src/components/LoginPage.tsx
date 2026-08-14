@@ -9,6 +9,8 @@ interface LoginPageProps {
   isLoggingIn: boolean;
   dbStatus: 'connected' | 'disconnected';
   barangayLogo: string;
+  showSignUp?: boolean;
+  onSignUpClick?: () => void;
 }
 
 export default function LoginPage({
@@ -17,6 +19,8 @@ export default function LoginPage({
   isLoggingIn,
   dbStatus,
   barangayLogo,
+  showSignUp,
+  onSignUpClick,
 }: LoginPageProps) {
   return (
     <div className="bg-surface text-on-surface font-body min-h-screen flex items-center justify-center p-4 selection:bg-primary selection:text-on-primary relative overflow-hidden">
@@ -126,8 +130,20 @@ export default function LoginPage({
                 {isLoggingIn ? 'Verifying...' : 'Login'}
               </button>
             </div>
+
+            {showSignUp && (
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={onSignUpClick}
+                  className="font-label text-xs text-on-surface-variant hover:text-primary transition-colors"
+                >
+                  No admin account yet? <span className="text-primary font-semibold">Sign Up</span>
+                </button>
+              </div>
+            )}
           </form>
-          
+
           {/* Footer Compliance */}
           <div className="mt-8 pt-4 border-t border-outline-variant/10 w-full text-center">
             <p className="font-label text-[10px] text-on-surface-variant/60 leading-relaxed uppercase tracking-tighter">

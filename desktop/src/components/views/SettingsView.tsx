@@ -36,6 +36,7 @@ export interface SettingsViewProps {
   setSecurityTargetTab: (v: 'admin' | null) => void;
   securityPasswordInput: string;
   setSecurityPasswordInput: (v: string) => void;
+  onVerifySecurityPasskey: (input: string) => Promise<boolean>;
   // Activity logs
   activityLogs: db.AuditLog[];
   logSearchQuery: string;
@@ -112,6 +113,7 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
     isSecurityModalOpen,
     securityPasswordInput,
     setSecurityPasswordInput,
+    onVerifySecurityPasskey,
     securityTargetTab,
     // Activity logs
     activityLogs,
@@ -1127,7 +1129,7 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                     <form onSubmit={async (e) => {
                       e.preventDefault();
                       const input = securityPasswordInput.trim();
-                      const isCorrect = (input === 'SKBSA2024-2026');
+                      const isCorrect = await onVerifySecurityPasskey(input);
 
                       if (isCorrect) {
                         setIsSettingsUnlocked(true);

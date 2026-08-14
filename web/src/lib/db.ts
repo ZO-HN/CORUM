@@ -6,7 +6,10 @@ import {
   initialPrograms,
   initialSubmissions,
   supabase as sharedSupabase,
-  isSupabaseConfigured as sharedIsSupabaseConfigured
+  isSupabaseConfigured as sharedIsSupabaseConfigured,
+  mapDbRowToProfileFields,
+  mapProfileToDbRow,
+  computeParticipation
 } from 'shared';
 import type {
   YouthProfile,
@@ -57,68 +60,15 @@ export const getProfiles = async (): Promise<YouthProfile[]> => {
     const activeOrCompletedPrograms = (programsRes.data || []).filter(p => p.status === 'Active' || p.status === 'Completed');
     const totalProgramsCount = activeOrCompletedPrograms.length;
     const attendanceRecords = attendanceRes.data || [];
-    
-      // convert snake_case to camelCase
+
     return (profilesRes.data || []).map(p => {
-      const youthPresentCount = attendanceRecords.filter(
-        a => a.youth_id === p.id && a.status === 'Present'
-      ).length;
-
-      const rate = totalProgramsCount > 0 
-        ? Math.round((youthPresentCount / totalProgramsCount) * 100) 
-        : 0;
-
-      const logs = attendanceRecords
-        .filter(a => a.youth_id === p.id)
-        .map(a => {
-          const prog = (programsRes.data || []).find(pr => pr.id === a.program_id);
-          return {
-            programTitle: prog ? prog.title : 'Unknown Program',
-            role: 'Participant',
-            date: prog && prog.start_date ? new Date(prog.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Unknown',
-            status: prog && prog.status === 'Completed' ? 'Completed' as const : 'In Progress' as const
-          };
-        });
-
+      const { participationRate, attendanceLogs } = computeParticipation(
+        p.id, totalProgramsCount, attendanceRecords, programsRes.data || []
+      );
       return {
-        id: p.id,
-        firstName: p.first_name,
-        lastName: p.last_name,
-        middleName: p.middle_name,
-        age: p.age,
-        gender: p.gender,
-        dob: p.date_of_birth,
-        civilStatus: p.civil_status,
-        bloodType: p.blood_type,
-        nationality: p.nationality,
-        contactNumber: p.contact_number,
-        email: p.email,
-        additionalEmail: p.additional_email || '',
-        address: p.home_address,
-        purok: p.purok,
-        isRegisteredVoter: p.is_registered_voter,
-        precinctNumber: p.precinct_number,
-        educationLevel: p.education_level,
-        educationalStatus: p.educational_status,
-        scholarshipStatus: p.scholarship_status,
-        youthClassification: p.youth_classification || '',
-        workStatus: p.work_status || '',
-        workSpecify: p.work_specify || '',
-        educationBackground: p.education_background || '',
-        educationSpecify: p.education_specify || '',
-        hasScholarship: p.has_scholarship || '',
-        scholarshipSpecify: p.scholarship_specify || '',
-        participatedLastKKElection: p.participated_last_kk_election || '',
-        attendedKKAssembly: p.attended_kk_assembly || '',
-        kkAssemblyCount: p.kk_assembly_count || 0,
-        skills: p.skills || [],
-        facebookLink: p.facebook_link || '',
-        avatarUrl: p.profile_picture_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuChyOvu3leC_dDOUGY31FsXkHDgQfmvUH-az42b2vnwE6iixNNUoe72klFCfGDQiR0uwQ4hn59r2_ojZ-X6SaNClayVUaLB8VXl5Jc2ipN_eAzapxK3EsMadzIBQurGAqL8Y17xvC_iVadws3hR_ehTNkneRDctkbrPOyLEBm4F3PzH1f1MO9aCQd_-rTX3R3J-V4nPp-JDJt4SZ8XuXbJlV76RUFdHsqBnrZSTsS0HsekalQfwLGvJdaNSJvYWFa7F4yGi-ttdW8Y',
-        status: p.status,
-        participationRate: rate,
-        joinedDate: p.joined_date ? new Date(p.joined_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
-        attendanceLogs: logs,
-        updatedAt: p.updated_at
+        ...mapDbRowToProfileFields(p),
+        participationRate,
+        attendanceLogs
       };
     });
   }
@@ -135,40 +85,7 @@ export const saveProfile = async (profile: Omit<YouthProfile, 'participationRate
     updatedAt: new Date().toISOString()
   };
 
-  const dbProfile = {
-    first_name: profile.firstName,
-    last_name: profile.lastName,
-    middle_name: profile.middleName,
-    age: profile.age,
-    gender: profile.gender,
-    date_of_birth: profile.dob,
-    civil_status: profile.civilStatus,
-    blood_type: profile.bloodType,
-    nationality: profile.nationality,
-    contact_number: profile.contactNumber,
-    email: profile.email,
-    additional_email: profile.additionalEmail || '',
-    home_address: profile.address,
-    purok: profile.purok,
-    is_registered_voter: profile.isRegisteredVoter,
-    precinct_number: profile.precinctNumber,
-    education_level: profile.educationLevel,
-    educational_status: profile.educationalStatus,
-    scholarship_status: profile.scholarshipStatus,
-    youth_classification: profile.youthClassification,
-    work_status: profile.workStatus,
-    work_specify: profile.workSpecify,
-    education_background: profile.educationBackground,
-    education_specify: profile.educationSpecify,
-    has_scholarship: profile.hasScholarship,
-    scholarship_specify: profile.scholarshipSpecify,
-    participated_last_kk_election: profile.participatedLastKKElection,
-    attended_kk_assembly: profile.attendedKKAssembly,
-    kk_assembly_count: profile.kkAssemblyCount,
-    skills: profile.skills,
-    profile_picture_url: profile.avatarUrl,
-    status: profile.status
-  };
+  const dbProfile = mapProfileToDbRow(profile);
 
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
@@ -474,34 +391,22 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
       } else if (data) {
         if (data.type === 'synced_profile' && data.profile) {
           const p = data.profile;
-          
-          let rate = p.participation_rate || 0;
-          let logs: { programTitle: string; role: string; date: string; status: 'Completed' | 'In Progress' }[] = p.attendance_logs || [];
+
+          let participationRate = p.participation_rate || 0;
+          let attendanceLogs: { programTitle: string; role: string; date: string; status: 'Completed' | 'In Progress' }[] = p.attendance_logs || [];
 
           try {
             const [programsRes, attendanceRes] = await Promise.all([
               supabase.from('programs').select('id, title, status, start_date'),
-              supabase.from('attendance').select('program_id, status').eq('youth_id', p.id)
+              supabase.from('attendance').select('youth_id, program_id, status').eq('youth_id', p.id)
             ]);
 
             if (!programsRes.error && !attendanceRes.error) {
               const activeOrCompletedPrograms = (programsRes.data || []).filter(pr => pr.status === 'Active' || pr.status === 'Completed');
               const totalProgramsCount = activeOrCompletedPrograms.length;
-              const youthPresentCount = (attendanceRes.data || []).filter(a => a.status === 'Present').length;
-              
-              rate = totalProgramsCount > 0 
-                ? Math.round((youthPresentCount / totalProgramsCount) * 100) 
-                : 0;
-
-              logs = (attendanceRes.data || []).map(a => {
-                const prog = (programsRes.data || []).find(pr => pr.id === a.program_id);
-                return {
-                  programTitle: prog ? prog.title : 'Unknown Program',
-                  role: 'Participant',
-                  date: prog && prog.start_date ? new Date(prog.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Unknown',
-                  status: prog && prog.status === 'Completed' ? 'Completed' as const : 'In Progress' as const
-                };
-              });
+              const computed = computeParticipation(p.id, totalProgramsCount, attendanceRes.data || [], programsRes.data || []);
+              participationRate = computed.participationRate;
+              attendanceLogs = computed.attendanceLogs;
             }
           } catch (err) {
             console.error("Error fetching dynamic attendance for verifyResidentAccess:", err);
@@ -510,42 +415,9 @@ export const verifyResidentAccess = async (email: string, passcode: string): Pro
           return {
             type: 'synced_profile',
             profile: {
-              id: p.id,
-              firstName: p.first_name,
-              lastName: p.last_name,
-              middleName: p.middle_name,
-              age: p.age,
-              gender: p.gender,
-              dob: p.date_of_birth,
-              civilStatus: p.civil_status,
-              bloodType: p.blood_type,
-              nationality: p.nationality,
-              contactNumber: p.contact_number,
-              email: p.email,
-              additionalEmail: p.additional_email || '',
-              address: p.home_address,
-              purok: p.purok,
-              isRegisteredVoter: p.is_registered_voter,
-              precinctNumber: p.precinct_number,
-              educationLevel: p.education_level,
-              educationalStatus: p.educational_status,
-              scholarshipStatus: p.scholarship_status,
-              youthClassification: p.youth_classification || '',
-              workStatus: p.work_status || '',
-              workSpecify: p.work_specify || '',
-              educationBackground: p.education_background || '',
-              educationSpecify: p.education_specify || '',
-              hasScholarship: p.has_scholarship || '',
-              scholarshipSpecify: p.scholarship_specify || '',
-              participatedLastKKElection: p.participated_last_kk_election || '',
-              attendedKKAssembly: p.attended_kk_assembly || '',
-              kkAssemblyCount: p.kk_assembly_count || 0,
-              skills: p.skills || [],
-              avatarUrl: p.profile_picture_url || '',
-              status: p.status,
-              participationRate: rate,
-              joinedDate: p.joined_date ? new Date(p.joined_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
-              attendanceLogs: logs
+              ...mapDbRowToProfileFields(p),
+              participationRate,
+              attendanceLogs
             }
           };
         } else if (data.type === 'pending_submission' && data.submission) {

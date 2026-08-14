@@ -53,6 +53,7 @@ import { hashPassword, verifyPassword, generateTempPassword } from './lib/localA
 import Dashboard from './components/Dashboard';
 import { z } from 'zod';
 import LoginPage from './components/LoginPage';
+import SetupPage from './components/SetupPage';
 import Sidebar from './components/layout/Sidebar';
 import TopBar from './components/layout/TopBar';
 import HelpModal from './components/HelpModal';
@@ -94,6 +95,9 @@ export default function App() {
   const [isLoadingUser, setIsLoadingUser] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [isSettingUp, setIsSettingUp] = useState<boolean>(false);
+  const [showSetupPage, setShowSetupPage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   
   // Database States
@@ -907,6 +911,7 @@ export default function App() {
             return [];
           }
         })();
+
         const foundUser = savedUsers.find(u =>
           (u.email.toLowerCase() === emailInput.toLowerCase() || u.name.toLowerCase() === identifier.toLowerCase())
           && u.status === 'Active'
@@ -931,6 +936,63 @@ export default function App() {
       setLoginError("Failed to connect to authentication server. Please check your network connection.");
       setIsLoggingIn(false);
     }
+  };
+
+  // One-time setup: only reachable when running offline with zero accounts
+  // configured yet. Creates the first account with full Admin (super admin)
+  // access and logs straight in. Also sets the security passkey used to
+  // unlock Settings/User Management — that passkey is never seeded and can
+  // only ever be set here, at initial setup.
+  const handleSetupSubmit = async (fullName: string, email: string, password: string, securityPasskey: string) => {
+    setSetupError(null);
+    setIsSettingUp(true);
+    try {
+      const savedUsers: UserRecord[] = (() => {
+        try {
+          const saved = localStorage.getItem('kk_users');
+          return saved ? JSON.parse(saved) : [];
+        } catch (_) {
+          return [];
+        }
+      })();
+
+      if (savedUsers.length > 0) {
+        setSetupError("An administrator account already exists. Please log in instead.");
+        setIsSettingUp(false);
+        return;
+      }
+
+      const superAdmin: UserRecord = {
+        id: `usr-${Date.now()}`,
+        name: fullName,
+        email,
+        role: 'Admin',
+        status: 'Active',
+        passwordHash: await hashPassword(password)
+      };
+
+      setUsers([superAdmin]);
+      localStorage.setItem('kk_users', JSON.stringify([superAdmin]));
+      localStorage.setItem('kk_security_passkey_hash', await hashPassword(securityPasskey));
+      setCurrentUser(superAdmin);
+      localStorage.setItem('kk_current_user', JSON.stringify(superAdmin));
+      localStorage.setItem('kk_desktop_auth', 'true');
+      setIsAuthenticated(true);
+      setIsSettingUp(false);
+    } catch (err) {
+      console.error("Setup exception:", err);
+      setSetupError("Failed to create the administrator account. Please try again.");
+      setIsSettingUp(false);
+    }
+  };
+
+  // Verifies the Settings/User Management passkey set at initial super admin
+  // setup. Never has a hardcoded fallback — if none was ever set, this
+  // always denies rather than accepting a seeded/default credential.
+  const verifySecurityPasskey = async (input: string): Promise<boolean> => {
+    const storedHash = localStorage.getItem('kk_security_passkey_hash');
+    if (!storedHash) return false;
+    return verifyPassword(input, storedHash);
   };
 
   const handleLogout = async () => {
@@ -2028,28 +2090,10 @@ export default function App() {
 
   const selectedYouth = youthProfiles.find(y => y.id === selectedYouthId) || paginatedProfiles.find(y => y.id === selectedYouthId);
 
-  if (isLoadingUser) {
-    return (
-      <div className="bg-surface text-[#e5e2e1] min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  // --- Render Login Page ---
-  if (!isAuthenticated) {
-    return (
-      <LoginPage
-        onLogin={handleLogin}
-        loginError={loginError}
-        isLoggingIn={isLoggingIn}
-        dbStatus={dbStatus}
-        barangayLogo={barangayLogo}
-      />
-    );
-  }
-
   // --- Dashboard Data Calculations (memoized to avoid re-computation on every render) ---
+  // NOTE: these hooks must run unconditionally on every render (Rules of
+  // Hooks), so they're declared above the `isLoadingUser` / `!isAuthenticated`
+  // early returns below rather than after them.
   const dashboardStats = useMemo(() => {
     const maleCount = youthProfiles.filter(y => y.gender === 'Male').length;
     const femaleCount = youthProfiles.filter(y => y.gender === 'Female').length;
@@ -2171,6 +2215,50 @@ export default function App() {
 
   const builderTotalCount = useMemo(() => builderData.reduce((acc, d) => acc + d.value, 0), [builderData]);
 
+  if (isLoadingUser) {
+    return (
+      <div className="bg-surface text-[#e5e2e1] min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // --- Render Setup or Login Page ---
+  if (!isAuthenticated) {
+    const noAccountsExistYet = !db.isSupabaseConfigured && (() => {
+      try {
+        const saved = localStorage.getItem('kk_users');
+        return !saved || JSON.parse(saved).length === 0;
+      } catch (_) {
+        return true;
+      }
+    })();
+
+    if (showSetupPage && noAccountsExistYet) {
+      return (
+        <SetupPage
+          onSetup={handleSetupSubmit}
+          setupError={setupError}
+          isSettingUp={isSettingUp}
+          dbStatus={dbStatus}
+          barangayLogo={barangayLogo}
+          onBackToLogin={() => { setSetupError(null); setShowSetupPage(false); }}
+        />
+      );
+    }
+
+    return (
+      <LoginPage
+        onLogin={handleLogin}
+        loginError={loginError}
+        isLoggingIn={isLoggingIn}
+        dbStatus={dbStatus}
+        barangayLogo={barangayLogo}
+        showSignUp={noAccountsExistYet}
+        onSignUpClick={() => { setLoginError(null); setShowSetupPage(true); }}
+      />
+    );
+  }
 
   return (
     <div className="bg-background text-on-surface font-body min-h-screen selection:bg-secondary selection:text-on-secondary flex">
@@ -2404,6 +2492,7 @@ export default function App() {
               setSecurityTargetTab={setSecurityTargetTab}
               securityPasswordInput={securityPasswordInput}
               setSecurityPasswordInput={setSecurityPasswordInput}
+              onVerifySecurityPasskey={verifySecurityPasskey}
               activityLogs={activityLogs}
               logSearchQuery={logSearchQuery}
               setLogSearchQuery={setLogSearchQuery}

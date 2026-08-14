@@ -1,6 +1,7 @@
 export * from './secureCache';
 export * from './supabaseClient';
 export * from './offlineSync';
+export * from './profileMapper';
 export * from './useOfflineSync';
 export * from './useNetworkStatus';
 export * from './ErrorBoundary';

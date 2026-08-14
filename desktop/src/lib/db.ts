@@ -6,7 +6,10 @@ import {
   initialPrograms,
   initialSubmissions,
   supabase as sharedSupabase,
-  isSupabaseConfigured as sharedIsSupabaseConfigured
+  isSupabaseConfigured as sharedIsSupabaseConfigured,
+  mapDbRowToProfileFields,
+  mapProfileToDbRow,
+  computeParticipation
 } from 'shared';
 import type {
   YouthProfile,
@@ -57,68 +60,15 @@ export const getProfiles = async (): Promise<YouthProfile[]> => {
     const activeOrCompletedPrograms = (programsRes.data || []).filter(p => p.status === 'Active' || p.status === 'Completed');
     const totalProgramsCount = activeOrCompletedPrograms.length;
     const attendanceRecords = attendanceRes.data || [];
-    
-      // convert snake_case to camelCase
+
     return (profilesRes.data || []).map(p => {
-      const youthPresentCount = attendanceRecords.filter(
-        a => a.youth_id === p.id && a.status === 'Present'
-      ).length;
-
-      const rate = totalProgramsCount > 0 
-        ? Math.round((youthPresentCount / totalProgramsCount) * 100) 
-        : 0;
-
-      const logs = attendanceRecords
-        .filter(a => a.youth_id === p.id)
-        .map(a => {
-          const prog = (programsRes.data || []).find(pr => pr.id === a.program_id);
-          return {
-            programTitle: prog ? prog.title : 'Unknown Program',
-            role: 'Participant',
-            date: prog && prog.start_date ? new Date(prog.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Unknown',
-            status: prog && prog.status === 'Completed' ? 'Completed' as const : 'In Progress' as const
-          };
-        });
-
+      const { participationRate, attendanceLogs } = computeParticipation(
+        p.id, totalProgramsCount, attendanceRecords, programsRes.data || []
+      );
       return {
-        id: p.id,
-        firstName: p.first_name,
-        lastName: p.last_name,
-        middleName: p.middle_name,
-        age: p.age,
-        gender: p.gender,
-        dob: p.date_of_birth,
-        civilStatus: p.civil_status,
-        bloodType: p.blood_type,
-        nationality: p.nationality,
-        contactNumber: p.contact_number,
-        email: p.email,
-        address: p.home_address,
-        purok: p.purok,
-        isRegisteredVoter: p.is_registered_voter,
-        precinctNumber: p.precinct_number,
-        educationLevel: p.education_level,
-        educationalStatus: p.educational_status,
-        scholarshipStatus: p.scholarship_status,
-        youthClassification: p.youth_classification || '',
-        workStatus: p.work_status || '',
-        workSpecify: p.work_specify || '',
-        educationBackground: p.education_background || '',
-        educationSpecify: p.education_specify || '',
-        hasScholarship: p.has_scholarship || '',
-        scholarshipSpecify: p.scholarship_specify || '',
-        participatedLastKKElection: p.participated_last_kk_election || '',
-        attendedKKAssembly: p.attended_kk_assembly || '',
-        kkAssemblyCount: p.kk_assembly_count || 0,
-        skills: p.skills || [],
-        facebookLink: p.facebook_link || '',
-        avatarUrl: p.profile_picture_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuChyOvu3leC_dDOUGY31FsXkHDgQfmvUH-az42b2vnwE6iixNNUoe72klFCfGDQiR0uwQ4hn59r2_ojZ-X6SaNClayVUaLB8VXl5Jc2ipN_eAzapxK3EsMadzIBQurGAqL8Y17xvC_iVadws3hR_ehTNkneRDctkbrPOyLEBm4F3PzH1f1MO9aCQd_-rTX3R3J-V4nPp-JDJt4SZ8XuXbJlV76RUFdHsqBnrZSTsS0HsekalQfwLGvJdaNSJvYWFa7F4yGi-ttdW8Y',
-        status: p.status,
-        participationRate: rate,
-        joinedDate: p.joined_date ? new Date(p.joined_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
-        otpCode: p.otp_code,
-        attendanceLogs: logs,
-        updatedAt: p.updated_at
+        ...mapDbRowToProfileFields(p),
+        participationRate,
+        attendanceLogs
       };
     });
   }
@@ -215,65 +165,13 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
       const attendanceRecords = attendanceRes.data || [];
 
       const profiles = data.map(p => {
-        const youthPresentCount = attendanceRecords.filter(
-          a => a.youth_id === p.id && a.status === 'Present'
-        ).length;
-
-        const rate = totalProgramsCount > 0 
-          ? Math.round((youthPresentCount / totalProgramsCount) * 100) 
-          : 0;
-
-        const logs = attendanceRecords
-          .filter(a => a.youth_id === p.id)
-          .map(a => {
-            const prog = (programsRes.data || []).find(pr => pr.id === a.program_id);
-            return {
-              programTitle: prog ? prog.title : 'Unknown Program',
-              role: 'Participant',
-              date: prog && prog.start_date ? new Date(prog.start_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Unknown',
-              status: prog && prog.status === 'Completed' ? 'Completed' as const : 'In Progress' as const
-            };
-          });
-
+        const { participationRate, attendanceLogs } = computeParticipation(
+          p.id, totalProgramsCount, attendanceRecords, programsRes.data || []
+        );
         return {
-          id: p.id,
-          firstName: p.first_name,
-          lastName: p.last_name,
-          middleName: p.middle_name,
-          age: p.age,
-          gender: p.gender,
-          dob: p.date_of_birth,
-          civilStatus: p.civil_status,
-          bloodType: p.blood_type,
-          nationality: p.nationality,
-          contactNumber: p.contact_number,
-          email: p.email,
-          address: p.home_address,
-          purok: p.purok,
-          isRegisteredVoter: p.is_registered_voter,
-          precinctNumber: p.precinct_number,
-          educationLevel: p.education_level,
-          educationalStatus: p.educational_status,
-          scholarshipStatus: p.scholarship_status,
-          youthClassification: p.youth_classification || '',
-          workStatus: p.work_status || '',
-          workSpecify: p.work_specify || '',
-          educationBackground: p.education_background || '',
-          educationSpecify: p.education_specify || '',
-          hasScholarship: p.has_scholarship || '',
-          scholarshipSpecify: p.scholarship_specify || '',
-          participatedLastKKElection: p.participated_last_kk_election || '',
-          attendedKKAssembly: p.attended_kk_assembly || '',
-          kkAssemblyCount: p.kk_assembly_count || 0,
-          skills: p.skills || [],
-          facebookLink: p.facebook_link || '',
-          avatarUrl: p.profile_picture_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuChyOvu3leC_dDOUGY31FsXkHDgQfmvUH-az42b2vnwE6iixNNUoe72klFCfGDQiR0uwQ4hn59r2_ojZ-X6SaNClayVUaLB8VXl5Jc2ipN_eAzapxK3EsMadzIBQurGAqL8Y17xvC_iVadws3hR_ehTNkneRDctkbrPOyLEBm4F3PzH1f1MO9aCQd_-rTX3R3J-V4nPp-JDJt4SZ8XuXbJlV76RUFdHsqBnrZSTsS0HsekalQfwLGvJdaNSJvYWFa7F4yGi-ttdW8Y',
-          status: p.status,
-          participationRate: rate,
-          joinedDate: p.joined_date ? new Date(p.joined_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Unknown',
-          otpCode: p.otp_code,
-          attendanceLogs: logs,
-          updatedAt: p.updated_at
+          ...mapDbRowToProfileFields(p),
+          participationRate,
+          attendanceLogs
         };
       });
       return { profiles, totalCount: count || 0 };
@@ -334,40 +232,7 @@ export const saveProfile = async (profile: Omit<YouthProfile, 'participationRate
     updatedAt: new Date().toISOString()
   };
 
-  const dbProfile = {
-    first_name: profile.firstName,
-    last_name: profile.lastName,
-    middle_name: profile.middleName,
-    age: profile.age,
-    gender: profile.gender,
-    date_of_birth: profile.dob,
-    civil_status: profile.civilStatus,
-    blood_type: profile.bloodType,
-    nationality: profile.nationality,
-    contact_number: profile.contactNumber,
-    email: profile.email,
-    home_address: profile.address,
-    purok: profile.purok,
-    is_registered_voter: profile.isRegisteredVoter,
-    precinct_number: profile.precinctNumber,
-    education_level: profile.educationLevel,
-    educational_status: profile.educationalStatus,
-    scholarship_status: profile.scholarshipStatus,
-    youth_classification: profile.youthClassification,
-    work_status: profile.workStatus,
-    work_specify: profile.workSpecify,
-    education_background: profile.educationBackground,
-    education_specify: profile.educationSpecify,
-    has_scholarship: profile.hasScholarship,
-    scholarship_specify: profile.scholarshipSpecify,
-    participated_last_kk_election: profile.participatedLastKKElection,
-    attended_kk_assembly: profile.attendedKKAssembly,
-    kk_assembly_count: profile.kkAssemblyCount,
-    skills: profile.skills,
-    facebook_link: profile.facebookLink || '',
-    profile_picture_url: profile.avatarUrl,
-    status: profile.status
-  };
+  const dbProfile = mapProfileToDbRow(profile);
 
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
@@ -401,40 +266,7 @@ export const saveProfilesBulk = async (profiles: Omit<YouthProfile, 'participati
     updatedAt: new Date().toISOString()
   }));
 
-  const dbProfiles = profiles.map(profile => ({
-    first_name: profile.firstName,
-    last_name: profile.lastName,
-    middle_name: profile.middleName,
-    age: profile.age,
-    gender: profile.gender,
-    date_of_birth: profile.dob,
-    civil_status: profile.civilStatus,
-    blood_type: profile.bloodType,
-    nationality: profile.nationality,
-    contact_number: profile.contactNumber,
-    email: profile.email,
-    home_address: profile.address,
-    purok: profile.purok,
-    is_registered_voter: profile.isRegisteredVoter,
-    precinct_number: profile.precinctNumber,
-    education_level: profile.educationLevel,
-    educational_status: profile.educationalStatus,
-    scholarship_status: profile.scholarshipStatus,
-    youth_classification: profile.youthClassification,
-    work_status: profile.workStatus,
-    work_specify: profile.workSpecify,
-    education_background: profile.educationBackground,
-    education_specify: profile.educationSpecify,
-    has_scholarship: profile.hasScholarship,
-    scholarship_specify: profile.scholarshipSpecify,
-    participated_last_kk_election: profile.participatedLastKKElection,
-    attended_kk_assembly: profile.attendedKKAssembly,
-    kk_assembly_count: profile.kkAssemblyCount,
-    skills: profile.skills,
-    facebook_link: profile.facebookLink || '',
-    profile_picture_url: profile.avatarUrl,
-    status: profile.status
-  }));
+  const dbProfiles = profiles.map(profile => mapProfileToDbRow(profile));
 
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
@@ -979,20 +811,22 @@ export const getDocuments = async (): Promise<DocumentRecord[]> => {
 export const saveDocument = async (doc: Omit<DocumentRecord, 'id' | 'createdAt'>): Promise<DocumentRecord> => {
   const newDoc: DocumentRecord = {
     ...doc,
-    id: `DOC-${Math.floor(Math.random() * 900000) + 100000}`,
+    id: crypto.randomUUID(),
     createdAt: new Date().toISOString()
+  };
+
+  const dbDoc = {
+    youth_id: doc.youthId,
+    file_name: doc.fileName,
+    file_url: doc.fileUrl,
+    file_type: doc.fileType
   };
 
   if (isSupabaseConfigured && supabase) {
     try {
       const { data, error } = await supabase
         .from('documents')
-        .insert({
-          youth_id: doc.youthId,
-          file_name: doc.fileName,
-          file_url: doc.fileUrl,
-          file_type: doc.fileType
-        })
+        .insert({ id: newDoc.id, ...dbDoc })
         .select()
         .single();
 
@@ -1006,10 +840,14 @@ export const saveDocument = async (doc: Omit<DocumentRecord, 'id' | 'createdAt'>
           createdAt: data.created_at
         };
       }
-      console.error("Error saving document to Supabase:", error);
+      console.error("Error saving document to Supabase, queuing mutation:", error);
+      await enqueueMutation('INSERT', 'documents', newDoc.id, dbDoc);
     } catch (err) {
       console.error(err);
+      await enqueueMutation('INSERT', 'documents', newDoc.id, dbDoc);
     }
+  } else {
+    await enqueueMutation('INSERT', 'documents', newDoc.id, dbDoc);
   }
 
   const docs = await getLocalData<DocumentRecord>('kk_documents', []);
@@ -1027,14 +865,15 @@ export const deleteDocument = async (id: string): Promise<boolean> => {
         .eq('id', id);
 
       if (error) {
-        console.error("Error deleting document from Supabase:", error);
-        return false;
+        console.error("Error deleting document from Supabase, queuing mutation:", error);
+        await enqueueMutation('DELETE', 'documents', id, null);
       }
-      return true;
     } catch (err) {
       console.error(err);
-      return false;
+      await enqueueMutation('DELETE', 'documents', id, null);
     }
+  } else {
+    await enqueueMutation('DELETE', 'documents', id, null);
   }
 
   const docs = await getLocalData<DocumentRecord>('kk_documents', []);
