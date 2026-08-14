@@ -1,4 +1,5 @@
 export * from './secureCache';
+export * from './supabaseClient';
 export * from './offlineSync';
 export * from './useOfflineSync';
 export * from './useNetworkStatus';

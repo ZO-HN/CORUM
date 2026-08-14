@@ -6,6 +6,8 @@ export interface UserRecord {
   role: UserRole;
   email: string;
   status: 'Active' | 'Disabled';
+  /** SHA-256 hash of the offline login password. Only used when Supabase isn't configured. */
+  passwordHash?: string;
 }
 
 export type ScanNotification = { message: string; type: 'success' | 'info' | 'error' } | null;
