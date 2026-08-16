@@ -115,6 +115,22 @@ export const mapProfileToDbRow = (profile: Partial<YouthProfile>) => ({
   status: profile.status
 });
 
+// "Last, First M." display format used across the youth list and detail views.
+export const formatYouthName = (profile: Pick<YouthProfile, 'firstName' | 'lastName' | 'middleName'>): string => {
+  const middleInitial = profile.middleName ? ` ${profile.middleName.trim().charAt(0).toUpperCase()}.` : '';
+  return `${profile.lastName}, ${profile.firstName}${middleInitial}`;
+};
+
+// Formats a YYYY-MM-DD date-of-birth string as "Month D, YYYY". Parsed as a
+// local date (not UTC) so it doesn't shift a day depending on timezone.
+export const formatDob = (dob: string): string => {
+  if (!dob) return 'N/A';
+  const [year, month, day] = dob.split('-').map(Number);
+  if (!year || !month || !day) return dob;
+  const date = new Date(year, month - 1, day);
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
 export const computeParticipation = (
   youthId: string,
   totalProgramsCount: number,

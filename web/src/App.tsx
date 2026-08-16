@@ -29,9 +29,12 @@ const page1Schema = z.object({
   genderSpecify: z.string().optional(),
   dob: z.string().min(1, "Date of birth is required"),
   civilStatus: z.string().min(1, "Civil status is required"),
-  contactNumber: z.string().min(7, "Contact number must be at least 7 characters").max(30),
+  contactNumber: z.string().regex(/^\d{11,}$/, "Contact number must be numbers only, at least 11 digits"),
   email: z.string().email("Invalid email address"),
-  facebookLink: z.string().min(1, "Facebook profile link is required"),
+  facebookLink: z.string().min(1, "Facebook profile link is required").regex(
+    /^(https?:\/\/)?(www\.)?(facebook\.com|fb\.com)\/.+/i,
+    "Enter a valid Facebook profile link (e.g. facebook.com/username)"
+  ),
   address: z.string().min(1, "Address details are required"),
   purok: z.string().min(1, "Purok/Sub-village is required")
 }).refine(data => {
@@ -80,7 +83,129 @@ const page2Schema = z.object({
 }, {
   message: "Please specify work occupation",
   path: ["workSpecify"]
+}).refine(data => {
+  if (data.workStatus === 'Currently looking for a job' && (!data.workSpecify || data.workSpecify.trim() === '')) {
+    return false;
+  }
+  return true;
+}, {
+  message: "Please add at least one desired job",
+  path: ["workSpecify"]
 });
+
+const programOptions = [
+  // Senior High Strands
+  "STEM (Science, Technology, Engineering & Mathematics)",
+  "ABM (Accountancy, Business & Management)",
+  "HUMSS (Humanities & Social Sciences)",
+  "GAS (General Academic Strand)",
+  "TVL - ICT (Information & Communications Technology)",
+  "TVL - Home Economics",
+  "TVL - Industrial Arts",
+  "TVL - Agri-Fishery Arts",
+  "Arts and Design Track",
+  "Sports Track",
+  // College / Bachelor's Programs
+  "BS Computer Science",
+  "BS Information Technology",
+  "BS Information Systems",
+  "BS Computer Engineering",
+  "BS Civil Engineering",
+  "BS Electrical Engineering",
+  "BS Electronics Engineering",
+  "BS Mechanical Engineering",
+  "BS Industrial Engineering",
+  "BS Chemical Engineering",
+  "BS Aeronautical Engineering",
+  "BS Geodetic Engineering",
+  "BS Metallurgical Engineering",
+  "BS Mining Engineering",
+  "BS Marine Engineering",
+  "BS Marine Transportation",
+  "BS Nursing",
+  "BS Pharmacy",
+  "BS Medical Technology / Medical Laboratory Science",
+  "BS Physical Therapy",
+  "BS Radiologic Technology",
+  "BS Nutrition and Dietetics",
+  "BS Psychology",
+  "BS Criminology",
+  "BS Social Work",
+  "BS Accountancy",
+  "BS Accounting Information System",
+  "BS Business Administration",
+  "BS Entrepreneurship",
+  "BS Real Estate Management",
+  "BS Legal Management",
+  "BS Office Administration",
+  "BS Customs Administration",
+  "BS Public Administration",
+  "BS Hospitality Management",
+  "BS Tourism Management",
+  "BS Hotel and Restaurant Management",
+  "BS Architecture",
+  "BS Interior Design",
+  "BS Agriculture",
+  "BS Agricultural Engineering",
+  "BS Fisheries",
+  "BS Forestry",
+  "BS Food Technology",
+  "BS Marine Biology",
+  "BS Biology",
+  "BS Chemistry",
+  "BS Mathematics",
+  "BS Statistics",
+  "BS Physics",
+  "BS Multimedia Arts",
+  "Bachelor of Elementary Education",
+  "Bachelor of Secondary Education",
+  "Bachelor of Early Childhood Education",
+  "Bachelor of Physical Education",
+  "Bachelor of Fine Arts",
+  "Bachelor of Laws (LLB/JD)",
+  "BA Communication",
+  "BA Journalism",
+  "BA Political Science",
+  "BA Sociology",
+  "BA Philosophy",
+  "BA English",
+  "BA Economics",
+  "Doctor of Medicine",
+  "Doctor of Dental Medicine",
+  "Doctor of Veterinary Medicine",
+  // Vocational / TESDA
+  "TESDA NC II - Computer Systems Servicing",
+  "TESDA NC II - Automotive Servicing",
+  "TESDA NC II - Electrical Installation and Maintenance",
+  "TESDA NC II - Cookery / Culinary Arts",
+  "TESDA NC II - Welding",
+  // Masteral / Doctorate
+  "Master of Arts in Education",
+  "Master in Business Administration (MBA)",
+  "Master of Science in Nursing",
+  "Master of Public Administration",
+  "Master of Information Technology",
+  "Master of Engineering",
+  "Master of Social Work",
+  "Doctor of Philosophy (PhD)",
+  "Doctor of Education (EdD)",
+  "Doctor of Business Administration (DBA)"
+];
+
+const isJobSeeker = (status: string) => status === 'Currently looking for a job';
+
+const calculateAge = (dob: string): number => {
+  if (!dob) return 0;
+  const birthDate = new Date(dob);
+  if (isNaN(birthDate.getTime())) return 0;
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return Math.max(age, 0);
+};
 
 const getYouthAgeGroup = (age: number): string => {
   if (age >= 15 && age <= 17) return "Child Youth (15-17 yrs old)";
@@ -142,7 +267,13 @@ export default function App() {
 
   const [skillInput, setSkillInput] = useState<string>('');
   
-  const skillSuggestions = ["Basketball", "Badminton", "Pickleball", "Volleyball", "Esports", "Coding", "Photography", "Cooking", "Music", "Writing", "First Aid", "Design", "Leadership"];
+  const skillSuggestions = [
+    "Basketball", "Badminton", "Pickleball", "Volleyball", "Esports", "Coding", "Photography",
+    "Cooking", "Music", "Writing", "First Aid", "Design", "Leadership",
+    "Web Dev", "AI Dev", "Data Science", "Machine Learning", "Game Dev",
+    "Valorant", "CODM", "Dota 2", "League of Legends", "FaceIT", "CS2",
+    "Community Workshops", "Dancing", "Entrepreneurship"
+  ];
 
   const handleAddSuggestion = (suggested: string) => {
     if (!formData.skills.includes(suggested)) {
@@ -157,6 +288,7 @@ export default function App() {
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
   const [triedNextStep, setTriedNextStep] = useState<boolean>(false);
   const [triedSubmit, setTriedSubmit] = useState<boolean>(false);
+  const [validationError, setValidationError] = useState<string>('');
   const requiresWorkSpecify = (status: string) => {
     return status === 'Employed' || status === 'Self-employed';
   };
@@ -330,6 +462,30 @@ export default function App() {
     });
   };
 
+  const [desiredJobInput, setDesiredJobInput] = useState<string>('');
+  const getDesiredJobs = () => formData.workSpecify.split(',').map(j => j.trim()).filter(Boolean);
+
+  const handleAddDesiredJob = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && desiredJobInput.trim()) {
+      e.preventDefault();
+      const jobs = getDesiredJobs();
+      if (!jobs.includes(desiredJobInput.trim())) {
+        setFormData({
+          ...formData,
+          workSpecify: [...jobs, desiredJobInput.trim()].join(', ')
+        });
+      }
+      setDesiredJobInput('');
+    }
+  };
+
+  const handleRemoveDesiredJob = (job: string) => {
+    setFormData({
+      ...formData,
+      workSpecify: getDesiredJobs().filter(j => j !== job).join(', ')
+    });
+  };
+
   const handleRegisterSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setTriedSubmit(true);
@@ -392,6 +548,8 @@ export default function App() {
       setDataPrivacyConsent(false);
       setTriedNextStep(false);
       setTriedSubmit(false);
+      setValidationError('');
+      setDesiredJobInput('');
       setFormStep(1);
     } catch (err) {
       console.error(err);
@@ -753,6 +911,16 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                {/* Recommendations & Comments Card */}
+                <div className="md:col-span-2 bg-[#131313] p-4 rounded-xl border border-[#353535]/15 space-y-2">
+                  <p className="text-[8px] text-on-surface-variant/60 uppercase font-black">Recommendations & Comments</p>
+                  <p className="font-semibold text-on-surface whitespace-pre-wrap">
+                    {formData.recommendations.trim() ? formData.recommendations : (
+                      <span className="text-on-surface-variant italic text-[10px] font-normal">No recommendations or comments provided.</span>
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -952,14 +1120,31 @@ export default function App() {
                     </div>
                   </div>
 
-                  <form 
+                  {validationError && (
+                    <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/40 text-red-400 text-xs font-bold rounded-xl py-3 px-4 mb-4 animate-scale-in">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                      {validationError}
+                    </div>
+                  )}
+
+                  <form
+                    noValidate
                     onSubmit={(e) => {
                       e.preventDefault();
                       setTriedSubmit(true);
-                      if (isPage1Valid() && isPage2Valid()) {
+                      setTriedNextStep(true);
+                      const page1Ok = isPage1Valid();
+                      const page2Ok = isPage2Valid();
+                      if (page1Ok && page2Ok) {
+                        setValidationError('');
                         setShowConfirmModal(true);
+                      } else if (!page1Ok) {
+                        setFormStep(1);
+                        setValidationError('Please complete all required fields in Part 1 (highlighted below) before submitting.');
+                      } else {
+                        setValidationError('Please complete all required fields in Part 2 (highlighted below) before submitting.');
                       }
-                    }} 
+                    }}
                     className="space-y-6"
                   >
                     {formStep === 1 && (
@@ -1003,29 +1188,29 @@ export default function App() {
 
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div className="space-y-1.5">
-                            <div className="flex justify-between items-center px-0.5">
-                              <label className="text-xs font-bold text-on-surface-variant">Age</label>
-                              <span className="text-[9px] text-primary/70 font-bold uppercase tracking-wider font-mono">15-30 only</span>
-                            </div>
-                            <input 
-                              type="number" 
+                            <label className="text-xs font-bold text-on-surface-variant">Date of Birth</label>
+                            <input
+                              type="date"
                               required
-                              value={formData.age}
-                              onChange={(e) => setFormData({...formData, age: Number(e.target.value)})}
-                              className={getInputClass(formData.age < 15 || formData.age > 30)}
-                              min="15"
-                              max="30"
+                              value={formData.dob}
+                              onChange={(e) => setFormData({...formData, dob: e.target.value, age: calculateAge(e.target.value)})}
+                              className={getInputClass(formData.dob.trim() === '')}
                             />
                           </div>
 
                           <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-on-surface-variant">Date of Birth</label>
-                            <input 
-                              type="date" 
+                            <div className="flex justify-between items-center px-0.5">
+                              <label className="text-xs font-bold text-on-surface-variant">Age</label>
+                              <span className="text-[9px] text-primary/70 font-bold uppercase tracking-wider font-mono">15-30 only</span>
+                            </div>
+                            <input
+                              type="number"
                               required
-                              value={formData.dob}
-                              onChange={(e) => setFormData({...formData, dob: e.target.value})}
-                              className={getInputClass(formData.dob.trim() === '')}
+                              readOnly
+                              disabled
+                              value={formData.dob ? formData.age : ''}
+                              placeholder="Set by Date of Birth"
+                              className={`${getInputClass(formData.dob.trim() !== '' && (formData.age < 15 || formData.age > 30))} cursor-not-allowed opacity-70`}
                             />
                           </div>
 
@@ -1107,24 +1292,26 @@ export default function App() {
 
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-on-surface-variant">Contact Phone Number</label>
-                            <input 
-                              type="text" 
+                            <input
+                              type="tel"
+                              inputMode="numeric"
                               required
                               value={formData.contactNumber}
-                              onChange={(e) => setFormData({...formData, contactNumber: e.target.value})}
-                              className={getInputClass(formData.contactNumber.trim() === '')}
-                              placeholder="+63 900 000 0000"
+                              onChange={(e) => setFormData({...formData, contactNumber: e.target.value.replace(/\D/g, '')})}
+                              className={getInputClass(!/^\d{11,}$/.test(formData.contactNumber))}
+                              placeholder="09XXXXXXXXX"
+                              maxLength={15}
                             />
                           </div>
 
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-on-surface-variant">Facebook Profile Link</label>
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               required
                               value={formData.facebookLink}
                               onChange={(e) => setFormData({...formData, facebookLink: e.target.value})}
-                              className={getInputClass(formData.facebookLink.trim() === '')}
+                              className={getInputClass(!/^(https?:\/\/)?(www\.)?(facebook\.com|fb\.com)\/.+/i.test(formData.facebookLink.trim()))}
                               placeholder="e.g. facebook.com/username"
                             />
                           </div>
@@ -1148,6 +1335,7 @@ export default function App() {
                             onClick={() => {
                               setTriedNextStep(true);
                               if (isPage1Valid()) {
+                                setValidationError('');
                                 setFormStep(2);
                               }
                             }}
@@ -1273,13 +1461,19 @@ export default function App() {
 
                             <div className="space-y-1.5">
                               <label className="text-xs font-bold text-on-surface-variant">Program (if applicable)</label>
-                              <input 
-                                type="text" 
+                              <input
+                                type="text"
+                                list="program-options"
                                 value={formData.educationSpecify}
                                 onChange={(e) => setFormData({...formData, educationSpecify: e.target.value})}
                                 className="w-full bg-surface-container-high border-none rounded-xl py-3 px-4 text-xs text-on-surface focus:ring-1 focus:ring-primary"
-                                placeholder="special program/strand/course/degree/masteral"
+                                placeholder="e.g. BS Computer Science, STEM, MBA..."
                               />
+                              <datalist id="program-options">
+                                {programOptions.map((p) => (
+                                  <option key={p} value={p} />
+                                ))}
+                              </datalist>
                             </div>
                           </div>
 
@@ -1304,14 +1498,48 @@ export default function App() {
                             {requiresWorkSpecify(formData.workStatus) && (
                               <div className="space-y-1.5 animate-scale-in">
                                 <label className="text-xs font-bold text-on-surface-variant">Specify Occupation / Work Details</label>
-                                <input 
-                                  type="text" 
+                                <input
+                                  type="text"
                                   required
                                   value={formData.workSpecify}
                                   onChange={(e) => setFormData({...formData, workSpecify: e.target.value})}
                                   className={getInputClass(requiresWorkSpecify(formData.workStatus) && formData.workSpecify.trim() === '', true)}
                                   placeholder="e.g. Call Center Agent, Store Owner, Teacher"
                                 />
+                              </div>
+                            )}
+
+                            {isJobSeeker(formData.workStatus) && (
+                              <div className="space-y-1.5 animate-scale-in">
+                                <label className="text-xs font-bold text-on-surface-variant">Desired Job(s) / Field of Interest</label>
+                                <input
+                                  type="text"
+                                  value={desiredJobInput}
+                                  onChange={(e) => setDesiredJobInput(e.target.value)}
+                                  onKeyDown={handleAddDesiredJob}
+                                  className={getInputClass(getDesiredJobs().length === 0, true)}
+                                  placeholder="e.g. Call Center Agent, Sales Associate (Press Enter)"
+                                />
+                                {getDesiredJobs().length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 pt-1">
+                                    {getDesiredJobs().map((job, index) => (
+                                      <span
+                                        key={index}
+                                        className="inline-flex items-center gap-1.5 bg-[#b4c5ff]/15 border border-[#b4c5ff]/40 text-[#b4c5ff] text-[10px] font-bold px-2.5 py-1 rounded-lg select-none"
+                                      >
+                                        {job}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveDesiredJob(job)}
+                                          className="text-[#b4c5ff]/60 hover:text-red-400 font-extrabold leading-none"
+                                          title="Remove"
+                                        >
+                                          &times;
+                                        </button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>

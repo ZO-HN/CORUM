@@ -767,14 +767,15 @@ export default function App() {
   const [classificationFilter, setClassificationFilter] = useState<string>('All');
   const [educationFilter, setEducationFilter] = useState<string>('All');
   const [statusFilter, setStatusFilter] = useState<string>('All');
-  
+  const [skillsFilter, setSkillsFilter] = useState<string>('All');
+
   // Pagination States
   const [currentPage, setCurrentPage] = useState<number>(1);
   const pageSize = 15;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchQuery, purokFilter, genderFilter, voterFilter, civilStatusFilter, workStatusFilter, classificationFilter, educationFilter, statusFilter]);
+  }, [debouncedSearchQuery, purokFilter, genderFilter, voterFilter, civilStatusFilter, workStatusFilter, classificationFilter, educationFilter, statusFilter, skillsFilter]);
   
   // Selected Profile for Detail View (Bento Grid)
   const [selectedYouthId, setSelectedYouthId] = useState<string | null>(null);
@@ -1151,7 +1152,8 @@ export default function App() {
         workStatus: workStatusFilter,
         youthClassification: classificationFilter,
         educationLevel: educationFilter,
-        status: statusFilter
+        status: statusFilter,
+        skill: skillsFilter
       });
       setPaginatedProfiles(result.profiles);
       setTotalProfilesCount(result.totalCount);
@@ -1184,6 +1186,7 @@ export default function App() {
     classificationFilter,
     educationFilter,
     statusFilter,
+    skillsFilter,
     isAuthenticated
   ]);
 
@@ -1346,6 +1349,7 @@ export default function App() {
     setClassificationFilter('All');
     setEducationFilter('All');
     setStatusFilter('All');
+    setSkillsFilter('All');
   };
 
   const handleExportToCSV = async () => {
@@ -2099,6 +2103,25 @@ export default function App() {
     }
   };
 
+  const handleUpdateYouth = async (id: string, patch: Partial<db.YouthProfile>): Promise<boolean> => {
+    const profile = youthProfiles.find(p => p.id === id);
+    const success = await db.updateProfile(id, patch);
+    if (success) {
+      logActivity('UPDATE', 'youth_profiles', { id, ...profile }, { id, ...patch });
+      await loadDatabaseData();
+      setScanNotification({
+        message: `UPDATED: Profile record has been saved.`,
+        type: 'info'
+      });
+    } else {
+      setScanNotification({
+        message: "ERROR: Failed to update profile record.",
+        type: 'error'
+      });
+    }
+    return success;
+  };
+
   const handleArchiveYouth = async (id: string) => {
     const profile = youthProfiles.find(p => p.id === id);
     if (!profile) return;
@@ -2484,8 +2507,12 @@ export default function App() {
               setEducationFilter={setEducationFilter}
               statusFilter={statusFilter}
               setStatusFilter={setStatusFilter}
+              skillsFilter={skillsFilter}
+              setSkillsFilter={setSkillsFilter}
+              skillSuggestions={skillSuggestions}
               onResetFilters={handleResetFilters}
               onExportToCSV={handleExportToCSV}
+              onArchive={handleArchiveYouth}
               setActiveTab={setActiveTab}
               setSelectedYouthId={setSelectedYouthId}
             />
@@ -2498,6 +2525,7 @@ export default function App() {
               ageGroups={ageGroups}
               onBack={() => setSelectedYouthId(null)}
               onArchive={handleArchiveYouth}
+              onSave={handleUpdateYouth}
               getYouthAgeGroup={getYouthAgeGroup}
             />
           )}

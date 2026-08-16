@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Users,
   FileText,
@@ -8,29 +8,232 @@ import {
   Edit,
   Printer,
   Archive,
+  X,
 } from 'lucide-react';
 import * as db from '../../lib/db';
+import { formatYouthName, formatDob } from 'shared';
 
 interface YouthProfileDetailProps {
   youth: db.YouthProfile;
   ageGroups: { id: string; label: string; minAge: number; maxAge: number }[];
   onBack: () => void;
   onArchive: (id: string) => void;
+  onSave: (id: string, patch: Partial<db.YouthProfile>) => Promise<boolean>;
   getYouthAgeGroup: (age: number) => string;
 }
 
+type EditForm = {
+  firstName: string;
+  middleName: string;
+  lastName: string;
+  civilStatus: db.YouthProfile['civilStatus'];
+  dob: string;
+  nationality: string;
+  contactNumber: string;
+  email: string;
+  facebookLink: string;
+  address: string;
+  isRegisteredVoter: boolean;
+  precinctNumber: string;
+  educationBackground: string;
+  educationSpecify: string;
+  educationalStatus: string;
+  scholarshipStatus: string;
+};
+
+const formFromYouth = (youth: db.YouthProfile): EditForm => ({
+  firstName: youth.firstName,
+  middleName: youth.middleName || '',
+  lastName: youth.lastName,
+  civilStatus: youth.civilStatus,
+  dob: youth.dob,
+  nationality: youth.nationality,
+  contactNumber: youth.contactNumber,
+  email: youth.email,
+  facebookLink: youth.facebookLink || '',
+  address: youth.address,
+  isRegisteredVoter: youth.isRegisteredVoter,
+  precinctNumber: youth.precinctNumber || '',
+  educationBackground: youth.educationBackground || youth.educationLevel || '',
+  educationSpecify: youth.educationSpecify || '',
+  educationalStatus: youth.educationalStatus,
+  scholarshipStatus: youth.scholarshipStatus,
+});
+
+const inputClass =
+  'w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/40';
+const labelClass = 'text-[10px] uppercase tracking-widest text-on-surface-variant font-bold mb-1 block';
+
+const EditProfileModal: React.FC<{
+  youth: db.YouthProfile;
+  onClose: () => void;
+  onSave: (id: string, patch: Partial<db.YouthProfile>) => Promise<boolean>;
+}> = ({ youth, onClose, onSave }) => {
+  const [form, setForm] = useState<EditForm>(() => formFromYouth(youth));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const set = <K extends keyof EditForm>(key: K, value: EditForm[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    const success = await onSave(youth.id, form);
+    setSaving(false);
+    if (success) {
+      onClose();
+    } else {
+      setError('Failed to save changes. Please try again.');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+      <div className="bg-surface-container rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-outline-variant/20">
+        <form onSubmit={handleSubmit}>
+          <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20 sticky top-0 bg-surface-container">
+            <h3 className="text-lg font-black font-headline text-on-surface">Edit Profile Record</h3>
+            <button type="button" onClick={onClose} className="text-on-surface-variant hover:text-on-surface">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="p-6 space-y-6">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-secondary mb-3">Personal Information</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>First Name</label>
+                  <input className={inputClass} value={form.firstName} onChange={(e) => set('firstName', e.target.value)} required />
+                </div>
+                <div>
+                  <label className={labelClass}>Last Name</label>
+                  <input className={inputClass} value={form.lastName} onChange={(e) => set('lastName', e.target.value)} required />
+                </div>
+                <div>
+                  <label className={labelClass}>Middle Name</label>
+                  <input className={inputClass} value={form.middleName} onChange={(e) => set('middleName', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Civil Status</label>
+                  <select className={inputClass} value={form.civilStatus} onChange={(e) => set('civilStatus', e.target.value as EditForm['civilStatus'])}>
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Date of Birth</label>
+                  <input type="date" className={inputClass} value={form.dob} onChange={(e) => set('dob', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Nationality</label>
+                  <input className={inputClass} value={form.nationality} onChange={(e) => set('nationality', e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-secondary mb-3">Contact Information</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Phone Number</label>
+                  <input className={inputClass} value={form.contactNumber} onChange={(e) => set('contactNumber', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Email Address</label>
+                  <input type="email" className={inputClass} value={form.email} onChange={(e) => set('email', e.target.value)} />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelClass}>Facebook Profile</label>
+                  <input className={inputClass} value={form.facebookLink} onChange={(e) => set('facebookLink', e.target.value)} placeholder="https://facebook.com/..." />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelClass}>Home Address</label>
+                  <textarea className={inputClass} rows={2} value={form.address} onChange={(e) => set('address', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Registered Voter</label>
+                  <select
+                    className={inputClass}
+                    value={form.isRegisteredVoter ? 'yes' : 'no'}
+                    onChange={(e) => set('isRegisteredVoter', e.target.value === 'yes')}
+                  >
+                    <option value="no">Non-Voter</option>
+                    <option value="yes">Registered</option>
+                  </select>
+                </div>
+                {form.isRegisteredVoter && (
+                  <div>
+                    <label className={labelClass}>Precinct Number</label>
+                    <input className={inputClass} value={form.precinctNumber} onChange={(e) => set('precinctNumber', e.target.value)} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-secondary mb-3">Education & Status</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Educational Background</label>
+                  <input className={inputClass} value={form.educationBackground} onChange={(e) => set('educationBackground', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Program / Strand / Course</label>
+                  <input className={inputClass} value={form.educationSpecify} onChange={(e) => set('educationSpecify', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Status</label>
+                  <input className={inputClass} value={form.educationalStatus} onChange={(e) => set('educationalStatus', e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Scholarship Status</label>
+                  <input className={inputClass} value={form.scholarshipStatus} onChange={(e) => set('scholarshipStatus', e.target.value)} />
+                </div>
+              </div>
+            </div>
+
+            {error && <p className="text-xs text-error font-semibold">{error}</p>}
+          </div>
+
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/20 sticky bottom-0 bg-surface-container">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-xs font-bold border border-outline-variant/30 text-on-surface hover:bg-surface-container-highest transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-5 py-2 rounded-lg text-xs font-bold bg-primary text-on-primary hover:opacity-90 disabled:opacity-50 transition-all"
+            >
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
   youth,
-  ageGroups,
   onBack,
   onArchive,
-  getYouthAgeGroup,
+  onSave,
 }) => {
+  const [isEditOpen, setIsEditOpen] = useState(false);
+
   return (
             <div className="space-y-6">
               {/* Back to list */}
               <div className="flex justify-between items-center">
-                <button 
+                <button
                   onClick={onBack}
                   className="flex items-center gap-2 text-xs font-bold text-primary hover:underline"
                 >
@@ -55,30 +258,19 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                       {youth.status}
                     </div>
                   </div>
-                  
-                  <div className="flex-1 text-center md:text-left">
-                    <div className="flex flex-col md:flex-row md:items-end gap-3 mb-4">
-                      <h2 className="text-3xl font-black font-headline tracking-tighter text-on-surface leading-none">
-                        {youth.firstName} {youth.middleName ? youth.middleName + ' ' : ''}{youth.lastName}
-                      </h2>
-                      <span className="text-on-surface-variant font-medium text-sm mb-0.5">
-                        ID: {youth.id}
-                      </span>
-                    </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-6 mt-4">
+                  <div className="flex-1 text-center md:text-left">
+                    <h2 className="text-3xl font-black font-headline tracking-tighter text-on-surface leading-none mb-4">
+                      {formatYouthName(youth)}
+                    </h2>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Age / Gender</p>
-                        <p className="font-semibold text-on-surface text-sm">{youth.age} Years • {youth.gender}</p>
+                        <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">ID Number</p>
+                        <p className="font-semibold text-on-surface text-sm break-all">{youth.id}</p>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Voter Status</p>
-                        <p className="font-semibold text-on-surface text-sm">
-                          {youth.isRegisteredVoter ? `Registered (Precinct ${youth.precinctNumber})` : 'Non-Voter'}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Joined Date</p>
+                        <p className="text-[10px] uppercase tracking-widest text-secondary font-bold">Signup Date</p>
                         <p className="font-semibold text-on-surface text-sm">{youth.joinedDate}</p>
                       </div>
                     </div>
@@ -91,7 +283,10 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                     Record Management
                   </h3>
                   <div className="space-y-3">
-                    <button className="w-full flex items-center justify-center gap-2 bg-primary text-on-primary font-bold py-3 rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs">
+                    <button
+                      onClick={() => setIsEditOpen(true)}
+                      className="w-full flex items-center justify-center gap-2 bg-primary text-on-primary font-bold py-3 rounded-lg hover:opacity-90 active:scale-[0.98] transition-all text-xs"
+                    >
                       <Edit className="w-4 h-4" /> Edit Profile Record
                     </button>
                     <button className="w-full flex items-center justify-center gap-2 border border-outline-variant/30 text-on-surface font-bold py-3 rounded-lg hover:bg-surface-container-highest transition-colors text-xs">
@@ -99,7 +294,7 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                     </button>
                   </div>
                   <div className="mt-8">
-                    <button 
+                    <button
                       onClick={() => onArchive(youth.id)}
                       className="w-full flex items-center justify-center gap-2 text-error/70 hover:text-error font-semibold py-2 rounded-lg transition-colors text-xs"
                     >
@@ -119,16 +314,22 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                   </div>
                   <div className="space-y-4">
                     <div className="flex justify-between items-center border-b border-outline-variant/10 pb-2">
+                      <span className="text-on-surface-variant text-sm">Age / Gender</span>
+                      <span className="font-semibold">{youth.age} Years • {youth.gender}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-outline-variant/10 pb-2">
+                      <span className="text-on-surface-variant text-sm">Voter Status</span>
+                      <span className="font-semibold">
+                        {youth.isRegisteredVoter ? `Registered (Precinct ${youth.precinctNumber})` : 'Non-Voter'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-outline-variant/10 pb-2">
                       <span className="text-on-surface-variant text-sm">Civil Status</span>
                       <span className="font-semibold">{youth.civilStatus}</span>
                     </div>
                     <div className="flex justify-between items-center border-b border-outline-variant/10 pb-2">
                       <span className="text-on-surface-variant text-sm">Date of Birth</span>
-                      <span className="font-semibold">{youth.dob}</span>
-                    </div>
-                    <div className="flex justify-between items-center border-b border-outline-variant/10 pb-2">
-                      <span className="text-on-surface-variant text-sm">Blood Type</span>
-                      <span className="font-semibold">{youth.bloodType}</span>
+                      <span className="font-semibold">{formatDob(youth.dob)}</span>
                     </div>
                     <div className="flex justify-between items-center pb-2">
                       <span className="text-on-surface-variant text-sm">Nationality</span>
@@ -153,14 +354,14 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                       <p className="font-semibold text-on-surface">{youth.email}</p>
                     </div>
                     {youth.facebookLink && (
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <span className="text-[10px] uppercase text-on-surface-variant tracking-wider font-bold">Facebook Profile</span>
-                        <p className="font-semibold text-on-surface">
-                          <a 
-                            href={youth.facebookLink.startsWith('http') ? youth.facebookLink : `https://${youth.facebookLink}`} 
-                            target="_blank" 
+                        <p className="font-semibold text-on-surface min-w-0">
+                          <a
+                            href={youth.facebookLink.startsWith('http') ? youth.facebookLink : `https://${youth.facebookLink}`}
+                            target="_blank"
                             rel="noopener noreferrer"
-                            className="text-primary hover:underline flex items-center gap-1"
+                            className="text-primary hover:underline break-all"
                           >
                             {youth.facebookLink}
                           </a>
@@ -211,7 +412,7 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
 
               {/* Bottom row bento: Participation History & Skills */}
               <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                
+
                 {/* Participation History */}
                 <div className="lg:col-span-8 bg-surface-container-low rounded-xl p-8 border-t-4 border-tertiary border border-[#353535]/15">
                   <div className="flex justify-between items-center mb-6">
@@ -290,6 +491,10 @@ const YouthProfileDetail: React.FC<YouthProfileDetailProps> = ({
                   </div>
                 </div>
               </section>
+
+              {isEditOpen && (
+                <EditProfileModal youth={youth} onClose={() => setIsEditOpen(false)} onSave={onSave} />
+              )}
             </div>
   );
 };

@@ -9,6 +9,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import * as db from '../../lib/db';
+import { formatYouthName } from 'shared';
 
 interface YouthListViewProps {
   paginatedProfiles: db.YouthProfile[];
@@ -34,9 +35,13 @@ interface YouthListViewProps {
   setEducationFilter: (v: string) => void;
   statusFilter: string;
   setStatusFilter: (v: string) => void;
+  skillsFilter: string;
+  setSkillsFilter: (v: string) => void;
+  skillSuggestions: string[];
   // Actions
   onResetFilters: () => void;
   onExportToCSV: () => void;
+  onArchive: (id: string) => void;
   setActiveTab: (tab: string) => void;
   setSelectedYouthId: (id: string | null) => void;
 }
@@ -64,8 +69,12 @@ const YouthListView: React.FC<YouthListViewProps> = ({
   setEducationFilter,
   statusFilter,
   setStatusFilter,
+  skillsFilter,
+  setSkillsFilter,
+  skillSuggestions,
   onResetFilters,
   onExportToCSV,
+  onArchive,
   setActiveTab,
   setSelectedYouthId,
 }) => {
@@ -103,7 +112,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                 </div>
 
                 {/* Filter Selects Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 pt-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-3 pt-2">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Purok Area</label>
                     <select 
@@ -219,6 +228,20 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                       <option value="Archived">Archived</option>
                     </select>
                   </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Skills</label>
+                    <select
+                      value={skillsFilter}
+                      onChange={(e) => setSkillsFilter(e.target.value)}
+                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
+                    >
+                      <option value="All">All Skills</option>
+                      {skillSuggestions.map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -231,29 +254,39 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                         <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Resident Profile</th>
                         <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Purok</th>
                         <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Voter Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Civil Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Employment</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Classification</th>
                         <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Education & Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Skills & Competencies</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Operational</th>
                         <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#353535]/10">
                       {totalProfilesCount > 0 ? (
                         paginatedProfiles.map((y) => (
-                          <tr key={y.id} className="hover:bg-surface-variant/20 transition-colors group">
+                          <tr
+                            key={y.id}
+                            onClick={() => setSelectedYouthId(y.id)}
+                            className="hover:bg-surface-variant/20 transition-colors group cursor-pointer"
+                          >
                             <td className="px-6 py-4.5">
                               <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-primary/10 group-hover:ring-primary/40 transition-all">
+                                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-primary/10 group-hover:ring-primary/40 transition-all shrink-0">
                                   <img src={y.avatarUrl} alt={y.firstName} className="w-full h-full object-cover" />
                                 </div>
                                 <div>
                                   <div className="flex items-center gap-1.5">
                                     <p className="font-headline font-bold text-sm text-on-surface">
-                                      {y.firstName} {y.lastName}
+                                      {formatYouthName(y)}
                                     </p>
                                     {y.facebookLink && (
-                                      <a 
+                                      <a
                                         href={y.facebookLink.startsWith('http') ? y.facebookLink : `https://${y.facebookLink}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
                                         className="text-[#1877F2] hover:opacity-80 transition-opacity"
                                         title="Facebook Profile"
                                       >
@@ -274,26 +307,67 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                             </td>
                             <td className="px-6 py-4.5">
                               <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
-                                y.isRegisteredVoter 
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                y.isRegisteredVoter
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                                   : 'bg-red-500/10 text-red-400 border border-red-500/20'
                               }`}>
                                 {y.isRegisteredVoter ? `Voter (${y.precinctNumber})` : 'Non-Voter'}
                               </span>
                             </td>
                             <td className="px-6 py-4.5">
+                              <span className="text-sm font-semibold text-on-surface-variant">{y.civilStatus}</span>
+                            </td>
+                            <td className="px-6 py-4.5">
+                              <span className="text-sm font-semibold text-on-surface-variant">{y.workStatus || 'N/A'}</span>
+                            </td>
+                            <td className="px-6 py-4.5">
+                              <span className="text-xs font-bold text-on-surface leading-tight">
+                                {y.youthClassification || 'N/A'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4.5">
                               <p className="text-xs font-bold text-on-surface leading-tight">{y.educationLevel}</p>
                               <p className="text-[10px] text-secondary font-semibold uppercase tracking-tight mt-0.5">{y.educationalStatus}</p>
                             </td>
+                            <td className="px-6 py-4.5">
+                              {y.skills.length > 0 ? (
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {y.skills.slice(0, 2).map((s) => (
+                                    <span key={s} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant/20 text-on-surface">
+                                      {s}
+                                    </span>
+                                  ))}
+                                  {y.skills.length > 2 && (
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-surface-container-highest border border-outline-variant/20 text-on-surface-variant">
+                                      +{y.skills.length - 2}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-on-surface-variant">N/A</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4.5">
+                              <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                                y.status === 'Active'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                  : y.status === 'Inactive'
+                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                              }`}>
+                                {y.status}
+                              </span>
+                            </td>
                             <td className="px-6 py-4.5 text-right">
                               <div className="flex justify-end gap-2">
-                                <button 
-                                  onClick={() => setSelectedYouthId(y.id)}
-                                  className="text-xs font-bold text-primary hover:underline bg-primary/10 hover:bg-primary/20 px-3 py-1.5 rounded-lg transition-all"
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onArchive(y.id);
+                                  }}
+                                  title="Archive Resident"
+                                  className="p-2 text-on-surface-variant hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                                 >
-                                  View Details
-                                </button>
-                                <button className="p-2 text-on-surface-variant hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
                                   <Archive className="w-4 h-4" />
                                 </button>
                               </div>
@@ -302,7 +376,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-6 py-10 text-center text-on-surface-variant text-sm font-semibold">
+                          <td colSpan={10} className="px-6 py-10 text-center text-on-surface-variant text-sm font-semibold">
                             No youth profiles found matching specified filters.
                           </td>
                         </tr>

@@ -88,6 +88,7 @@ export interface GetProfilesOptions {
   youthClassification?: string;
   educationLevel?: string;
   status?: string;
+  skill?: string;
 }
 
 export interface PaginatedProfiles {
@@ -107,7 +108,8 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
     workStatus,
     youthClassification,
     educationLevel,
-    status
+    status,
+    skill
   } = options;
 
   if (isSupabaseConfigured && supabase) {
@@ -138,6 +140,9 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
     }
     if (status && status !== 'All') {
       query = query.eq('status', status);
+    }
+    if (skill && skill !== 'All') {
+      query = query.contains('skills', [skill]);
     }
 
     if (search && search.trim() !== '') {
@@ -205,6 +210,9 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
   }
   if (status && status !== 'All') {
     filtered = filtered.filter(p => p.status === status);
+  }
+  if (skill && skill !== 'All') {
+    filtered = filtered.filter(p => (p.skills || []).includes(skill));
   }
 
   if (search && search.trim() !== '') {
@@ -523,6 +531,33 @@ export const updateProfileStatus = async (
 
   const profiles = await getLocalData<YouthProfile>('kk_youth_profiles', initialYouthProfiles);
   const updated = profiles.map(p => p.id === id ? { ...p, status, updatedAt: localUpdatedAt } : p);
+  await setLocalData('kk_youth_profiles', updated);
+  return true;
+};
+
+export const updateProfile = async (
+  id: string,
+  patch: Partial<YouthProfile>
+): Promise<boolean> => {
+  const localUpdatedAt = new Date().toISOString();
+  const dbPayload = mapProfileToDbRow(patch);
+
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('youth_profiles')
+      .update(dbPayload)
+      .eq('id', id);
+
+    if (error) {
+      console.error("Error updating profile on Supabase, queuing:", error);
+      await enqueueMutation('UPDATE', 'youth_profiles', id, dbPayload);
+    }
+  } else {
+    await enqueueMutation('UPDATE', 'youth_profiles', id, dbPayload);
+  }
+
+  const profiles = await getLocalData<YouthProfile>('kk_youth_profiles', initialYouthProfiles);
+  const updated = profiles.map(p => p.id === id ? { ...p, ...patch, updatedAt: localUpdatedAt } : p);
   await setLocalData('kk_youth_profiles', updated);
   return true;
 };
