@@ -238,19 +238,17 @@ export const saveSubmission = async (formData: RegistrationSubmission['formData'
   };
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
+    // no .select() here: anon only has INSERT on this table (by design, so
+    // strangers can't read other residents' submissions), and chaining
+    // .select() to read the row back requires SELECT too — it would fail
+    // every anonymous submission even though the INSERT itself succeeded.
+    const { error } = await supabase
       .from('registration_submissions')
-      .insert(dbSubmission)
-      .select()
-      .single();
+      .insert({ ...dbSubmission, id: newSub.id });
 
     if (error) {
       console.error("Error saving submission to Supabase, queuing:", error);
       await enqueueMutation('INSERT', 'registration_submissions', newSub.id, dbSubmission);
-    } else if (data) {
-      newSub.id = data.id;
-      newSub.createdAt = data.created_at;
-      newSub.updatedAt = data.updated_at;
     }
   } else {
     await enqueueMutation('INSERT', 'registration_submissions', newSub.id, dbSubmission);

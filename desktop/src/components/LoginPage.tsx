@@ -133,13 +133,16 @@ export default function LoginPage({
 
             {showSignUp && (
               <div className="pt-1 text-center">
-                <button
-                  type="button"
-                  onClick={onSignUpClick}
-                  className="font-label text-xs text-on-surface-variant hover:text-primary transition-colors"
-                >
-                  No admin account yet? <span className="text-primary font-semibold">Sign Up</span>
-                </button>
+                <p className="font-label text-xs text-on-surface-variant leading-relaxed">
+                  No existing accounts registered. Register the initial super admin account — one time only:{' '}
+                  <button
+                    type="button"
+                    onClick={onSignUpClick}
+                    className="text-primary font-semibold hover:text-primary-fixed-dim hover:underline underline-offset-2 transition-colors"
+                  >
+                    Create Super Admin Account
+                  </button>
+                </p>
               </div>
             )}
           </form>

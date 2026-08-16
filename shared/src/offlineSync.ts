@@ -155,15 +155,28 @@ async function processQueueItem(item: OfflineMutation): Promise<boolean> {
   const { table, operation, recordId, payload, localUpdatedAt } = item;
 
   // fetch remote record's updated time to check for conflicts
-  const { data: remoteData, error: fetchError } = await supabase
+  const { data: fetchedData, error: fetchError } = await supabase
     .from(table)
     .select('*')
     .eq('id', recordId)
     .maybeSingle();
 
+  let remoteData = fetchedData;
+
   if (fetchError) {
-    console.error(`Fetch error during sync for ${table}/${recordId}:`, fetchError);
-    throw fetchError;
+    // some roles (e.g. anon submitting registration_submissions) only ever
+    // have INSERT on a table by design, with no SELECT grant at all — the
+    // conflict check above is then impossible to run, not just empty. For a
+    // fresh INSERT that's fine: there's nothing to conflict with from this
+    // role's perspective, so proceed as if no remote row was found instead
+    // of permanently failing every sync attempt for these records.
+    if (fetchError.code === '42501' && operation === 'INSERT') {
+      console.warn(`No SELECT permission to check for conflicts on ${table}/${recordId} — proceeding with plain insert.`);
+      remoteData = null;
+    } else {
+      console.error(`Fetch error during sync for ${table}/${recordId}:`, fetchError);
+      throw fetchError;
+    }
   }
 
   // check if remote has newer updates

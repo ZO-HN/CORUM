@@ -275,6 +275,12 @@ CREATE POLICY "sys_config_admins_staff_full" ON public.system_config FOR ALL TO 
 CREATE POLICY "sys_config_authenticated_select" ON public.system_config FOR SELECT TO authenticated
     USING (true);
 
+-- system_config only holds public branding info (barangay name/logo, SK
+-- officials, puroks) — no PII — and the public web portal needs to read it
+-- before login to show branding, so it's also readable by anon.
+CREATE POLICY "sys_config_anon_select" ON public.system_config FOR SELECT TO anon
+    USING (true);
+
 -- desktop admin policies
 
 -- programs
@@ -328,10 +334,10 @@ REVOKE SELECT ON public.user_roles            FROM anon;
 REVOKE SELECT ON public.attendance            FROM anon;
 REVOKE SELECT ON public.documents             FROM anon;
 REVOKE SELECT ON public.registration_submissions FROM anon;
-REVOKE SELECT ON public.system_config         FROM anon;
 REVOKE ALL ON public.resident_access_attempts FROM anon, authenticated;
 
 GRANT INSERT ON public.registration_submissions TO anon;
+GRANT SELECT ON public.system_config TO anon;
 
 
 -- triggers
