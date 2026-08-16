@@ -70,4 +70,8 @@ DEBUG.md
 *.debug.md
 DEBUG*.md
 
+# Supabase temp directory
+supabase/.temp/
+
+
 

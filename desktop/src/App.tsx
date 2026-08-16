@@ -98,6 +98,9 @@ export default function App() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [isSettingUp, setIsSettingUp] = useState<boolean>(false);
   const [showSetupPage, setShowSetupPage] = useState<boolean>(false);
+  // Supabase-mode "does an admin exist yet" check — null while unchecked,
+  // then true/false once the any_admin_exists() RPC responds.
+  const [supabaseHasAdmin, setSupabaseHasAdmin] = useState<boolean | null>(null);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   
   // Database States
@@ -284,6 +287,22 @@ export default function App() {
           } catch (_) {}
         }
       }
+    }
+  }, []);
+
+  // Supabase-mode recovery check: is there an admin account at all? Runs
+  // once regardless of session state, since it decides whether to show the
+  // one-time setup screen instead of the normal login form.
+  useEffect(() => {
+    if (db.isSupabaseConfigured && db.supabase) {
+      db.supabase.rpc('any_admin_exists').then(({ data, error }) => {
+        if (error) {
+          console.error('Error checking any_admin_exists:', error);
+          setSupabaseHasAdmin(true); // fail safe: assume an admin exists, show login not setup
+        } else {
+          setSupabaseHasAdmin(Boolean(data));
+        }
+      });
     }
   }, []);
 
@@ -938,15 +957,42 @@ export default function App() {
     }
   };
 
-  // One-time setup: only reachable when running offline with zero accounts
-  // configured yet. Creates the first account with full Admin (super admin)
-  // access and logs straight in. Also sets the security passkey used to
-  // unlock Settings/User Management — that passkey is never seeded and can
-  // only ever be set here, at initial setup.
+  // One-time setup: only reachable when no admin account exists yet — in
+  // Supabase mode that's checked server-side via any_admin_exists(), in
+  // offline mode via the local kk_users list. Creates the first account
+  // with full Admin (super admin) access and logs straight in. Also sets
+  // the security passkey used to unlock Settings/User Management — that
+  // passkey is local-only, never seeded, and can only ever be set here.
   const handleSetupSubmit = async (fullName: string, email: string, password: string, securityPasskey: string) => {
     setSetupError(null);
     setIsSettingUp(true);
     try {
+      if (db.isSupabaseConfigured && db.supabase) {
+        const { data: newAdminId, error } = await db.supabase.rpc('setup_first_admin', {
+          p_email: email,
+          p_password: password,
+          p_display_name: fullName
+        });
+
+        if (error || !newAdminId) {
+          setSetupError(error?.message || "Failed to create the administrator account. Please try again.");
+          setIsSettingUp(false);
+          return;
+        }
+
+        localStorage.setItem('kk_security_passkey_hash', await hashPassword(securityPasskey));
+
+        const { error: signInError } = await db.signIn(email, password);
+        if (signInError) {
+          setSetupError("Account created, but automatic sign-in failed. Please log in manually.");
+          setIsSettingUp(false);
+          return;
+        }
+        // fetchUserRole (via onAuthStateChange) handles setting isAuthenticated
+        setIsSettingUp(false);
+        return;
+      }
+
       const savedUsers: UserRecord[] = (() => {
         try {
           const saved = localStorage.getItem('kk_users');
@@ -2215,7 +2261,7 @@ export default function App() {
 
   const builderTotalCount = useMemo(() => builderData.reduce((acc, d) => acc + d.value, 0), [builderData]);
 
-  if (isLoadingUser) {
+  if (isLoadingUser || (db.isSupabaseConfigured && supabaseHasAdmin === null)) {
     return (
       <div className="bg-surface text-[#e5e2e1] min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -2225,14 +2271,16 @@ export default function App() {
 
   // --- Render Setup or Login Page ---
   if (!isAuthenticated) {
-    const noAccountsExistYet = !db.isSupabaseConfigured && (() => {
-      try {
-        const saved = localStorage.getItem('kk_users');
-        return !saved || JSON.parse(saved).length === 0;
-      } catch (_) {
-        return true;
-      }
-    })();
+    const noAccountsExistYet = db.isSupabaseConfigured
+      ? supabaseHasAdmin === false
+      : (() => {
+          try {
+            const saved = localStorage.getItem('kk_users');
+            return !saved || JSON.parse(saved).length === 0;
+          } catch (_) {
+            return true;
+          }
+        })();
 
     if (showSetupPage && noAccountsExistYet) {
       return (

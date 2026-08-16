@@ -12,7 +12,11 @@ DROP TABLE IF EXISTS public.youth_profiles CASCADE;
 DROP TABLE IF EXISTS public.user_roles CASCADE;
 
 -- enable extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- (uuid generation uses the built-in gen_random_uuid() instead of uuid-ossp,
+-- since Supabase installs extension functions into a separate "extensions"
+-- schema that isn't on the default search_path — every function below that
+-- calls pgcrypto's crypt()/gen_salt() explicitly includes "extensions" in
+-- its own SET search_path clause for the same reason.)
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 
@@ -30,7 +34,7 @@ ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 
 -- resident profiles
 CREATE TABLE IF NOT EXISTS public.youth_profiles (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     first_name VARCHAR(100) NOT NULL,
     last_name VARCHAR(100) NOT NULL,
@@ -94,7 +98,7 @@ ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
 
 -- programs (projects, events, seminars)
 CREATE TABLE IF NOT EXISTS public.programs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     description TEXT,
     category VARCHAR(100) CHECK (category IN ('Sports', 'Education', 'Environment', 'Health', 'General')),
@@ -110,7 +114,7 @@ ALTER TABLE public.programs ENABLE ROW LEVEL SECURITY;
 
 -- attendance check-ins
 CREATE TABLE IF NOT EXISTS public.attendance (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     program_id UUID NOT NULL REFERENCES public.programs(id) ON DELETE CASCADE,
     youth_id UUID NOT NULL REFERENCES public.youth_profiles(id) ON DELETE CASCADE,
     time_in TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
@@ -124,7 +128,7 @@ ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 
 -- announcements
 CREATE TABLE IF NOT EXISTS public.announcements (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     content TEXT NOT NULL,
     category VARCHAR(100) DEFAULT 'General',
@@ -136,7 +140,7 @@ ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 
 -- uploaded verification documents
 CREATE TABLE IF NOT EXISTS public.documents (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     youth_id UUID REFERENCES public.youth_profiles(id) ON DELETE CASCADE,
     file_name VARCHAR(255) NOT NULL,
     file_url TEXT NOT NULL,
@@ -148,7 +152,7 @@ ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
 -- audit logs
 CREATE TABLE IF NOT EXISTS public.audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     action VARCHAR(50) NOT NULL,
     table_name VARCHAR(100) NOT NULL,
@@ -164,7 +168,7 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- self-registration queue
 CREATE TABLE IF NOT EXISTS public.registration_submissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     form_data JSONB NOT NULL,
     status VARCHAR(50) DEFAULT 'Pending' CHECK (status IN ('Pending', 'Approved', 'Rejected')),
     reviewer_notes TEXT,
@@ -237,7 +241,7 @@ BEGIN
         AND role = ANY(p_roles)
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- core / shared table policies
 
@@ -339,7 +343,7 @@ BEGIN
     NEW.updated_at = timezone('utc'::text, now());
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SET search_path = public, extensions, pg_catalog;
 
 CREATE TRIGGER set_updated_at_youth_profiles BEFORE UPDATE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER set_updated_at_programs BEFORE UPDATE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -366,7 +370,7 @@ BEGIN
     END IF;
     RETURN NULL;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 CREATE TRIGGER audit_youth_profiles_trigger AFTER INSERT OR UPDATE OR DELETE ON public.youth_profiles FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
 CREATE TRIGGER audit_programs_trigger AFTER INSERT OR UPDATE OR DELETE ON public.programs FOR EACH ROW EXECUTE FUNCTION public.process_audit_logging();
@@ -395,11 +399,79 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- bootstrap-only recovery: lets an unauthenticated client check whether an
+-- admin still exists, and if not, create the first one. setup_first_admin
+-- re-checks server-side on every call and always fails once any admin
+-- exists, so exposing it to anon can never be used to add extra admins or
+-- take over a project that already has one.
+CREATE OR REPLACE FUNCTION public.any_admin_exists()
+RETURNS BOOLEAN AS $$
+    SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE role = 'admin');
+$$ LANGUAGE sql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
+
+GRANT EXECUTE ON FUNCTION public.any_admin_exists() TO anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.setup_first_admin(
+    p_email TEXT,
+    p_password TEXT,
+    p_display_name TEXT
+)
+RETURNS UUID AS $$
+DECLARE
+    v_user_id UUID;
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.user_roles WHERE role = 'admin') THEN
+        RAISE EXCEPTION 'An administrator already exists. Use the login screen instead.';
+    END IF;
+
+    v_user_id := gen_random_uuid();
+
+    -- confirmation_token/recovery_token/email_change/email_change_token_new
+    -- have no DB default; GoTrue's own signup path always sets them to ''
+    -- (never NULL) — a NULL there breaks GoTrue's own row scanning with an
+    -- opaque "Database error querying schema", even though the row is
+    -- otherwise well-formed and passes every Postgres-level constraint.
+    INSERT INTO auth.users (
+        instance_id, id, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud,
+        confirmation_token, recovery_token, email_change, email_change_token_new
+    )
+    VALUES (
+        '00000000-0000-0000-0000-000000000000', v_user_id, p_email, crypt(p_password, gen_salt('bf')), now(),
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        jsonb_build_object('full_name', p_display_name), now(), now(), 'authenticated', 'authenticated',
+        '', '', '', ''
+    );
+
+    -- required alongside auth.users for Supabase's multi-provider identity
+    -- model — without it, GoTrue's own queries against this user fail.
+    INSERT INTO auth.identities (id, user_id, provider, provider_id, identity_data, created_at, updated_at, last_sign_in_at)
+    VALUES (
+        gen_random_uuid(), v_user_id, 'email', v_user_id::text,
+        jsonb_build_object('sub', v_user_id::text, 'email', p_email, 'email_verified', false, 'phone_verified', false),
+        now(), now(), now()
+    );
+
+    -- on_auth_user_created also fires and inserts a user_roles row, but its
+    -- "first ever signup" heuristic only checks for ANY existing row, not
+    -- specifically an admin — with the last-admin guard removed it's now
+    -- possible to have staff-only rows and no admin, so force the role here
+    -- explicitly rather than trusting that trigger's guess.
+    INSERT INTO public.user_roles (id, role, display_name)
+    VALUES (v_user_id, 'admin', p_display_name)
+    ON CONFLICT (id) DO UPDATE SET role = 'admin', display_name = p_display_name;
+
+    RETURN v_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
+
+GRANT EXECUTE ON FUNCTION public.setup_first_admin(TEXT, TEXT, TEXT) TO anon;
 
 -- prevents removing the last admin (disabled to allow total database wipe/reset)
 CREATE OR REPLACE FUNCTION public.prevent_last_admin_lockout()
@@ -407,7 +479,7 @@ RETURNS TRIGGER AS $$
 BEGIN
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SET search_path = public, extensions, pg_catalog;
 
 
 -- prevents permanently deleting a youth profile that still has attendance
@@ -421,7 +493,7 @@ BEGIN
     END IF;
     RETURN OLD;
 END;
-$$ LANGUAGE plpgsql SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SET search_path = public, extensions, pg_catalog;
 
 CREATE OR REPLACE TRIGGER prevent_youth_delete_with_history_trigger
     BEFORE DELETE ON public.youth_profiles
@@ -541,7 +613,7 @@ BEGIN
 
     RETURN NULL;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- updates phone/email with passcode check
 CREATE OR REPLACE FUNCTION public.update_resident_contacts(
@@ -574,7 +646,7 @@ BEGIN
 
     RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- desktop admin helpers
 
@@ -715,7 +787,7 @@ BEGIN
         'participationData', COALESCE(v_participation_data, '[]'::jsonb)
     );
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- list users (admin only)
 CREATE OR REPLACE FUNCTION public.get_system_users()
@@ -742,7 +814,7 @@ BEGIN
     LEFT JOIN public.user_roles r ON u.id = r.id
     ORDER BY u.created_at DESC;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- add user (admin only)
 CREATE OR REPLACE FUNCTION public.create_system_user(
@@ -761,16 +833,25 @@ BEGIN
     END IF;
 
     v_name := COALESCE(NULLIF(TRIM(p_display_name), ''), split_part(p_email, '@', 1));
-    v_user_id := uuid_generate_v4();
+    v_user_id := gen_random_uuid();
 
     INSERT INTO auth.users (
-        id, email, encrypted_password, email_confirmed_at,
-        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud
+        instance_id, id, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud,
+        confirmation_token, recovery_token, email_change, email_change_token_new
     )
     VALUES (
-        v_user_id, p_email, crypt(p_password, gen_salt('bf')), now(),
+        '00000000-0000-0000-0000-000000000000', v_user_id, p_email, crypt(p_password, gen_salt('bf')), now(),
         '{"provider":"email","providers":["email"]}'::jsonb,
-        jsonb_build_object('full_name', v_name), now(), now(), 'authenticated', 'authenticated'
+        jsonb_build_object('full_name', v_name), now(), now(), 'authenticated', 'authenticated',
+        '', '', '', ''
+    );
+
+    INSERT INTO auth.identities (id, user_id, provider, provider_id, identity_data, created_at, updated_at, last_sign_in_at)
+    VALUES (
+        gen_random_uuid(), v_user_id, 'email', v_user_id::text,
+        jsonb_build_object('sub', v_user_id::text, 'email', p_email, 'email_verified', false, 'phone_verified', false),
+        now(), now(), now()
     );
 
     INSERT INTO public.user_roles (id, role, display_name)
@@ -779,7 +860,7 @@ BEGIN
 
     RETURN v_user_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- delete user (admin only)
 -- No server-side Admin API is reachable from this client-only project (that
@@ -809,7 +890,7 @@ BEGIN
 
     RETURN v_deleted_count > 0;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- update role (admin only)
 CREATE OR REPLACE FUNCTION public.update_system_user_role(
@@ -828,7 +909,7 @@ BEGIN
 
     RETURN TRUE;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_catalog;
 
 -- backfill missing display names
 UPDATE public.user_roles r
