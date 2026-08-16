@@ -17,8 +17,23 @@ import {
 } from 'lucide-react';
 import * as db from './lib/db';
 import { z } from 'zod';
-import { useNetworkStatus, getSecureCache, setSecureCache, removeSecureCache } from 'shared';
+import { useNetworkStatus, getSecureCache, setSecureCache, removeSecureCache, QrScannerModal } from 'shared';
+import { QRCodeSVG } from 'qrcode.react';
 import defaultLogo from './assets/logo.png';
+
+// Extracts a program id from a scanned QR, which encodes either a bare UUID or a
+// "<origin>?checkin=<id>" deep link (see the QR displayed on the desktop Attendance Logger).
+const extractProgramIdFromScan = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  try {
+    const url = new URL(trimmed);
+    const fromQuery = url.searchParams.get('checkin');
+    if (fromQuery) return fromQuery;
+  } catch (_) {
+    // not a URL, fall through to treating it as a bare id
+  }
+  return trimmed || null;
+};
 
 const page1Schema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -361,6 +376,77 @@ export default function App() {
     };
     saveSession();
   }, [sessionUser]);
+
+  // Program QR Check-In States
+  const [pendingCheckinProgramId, setPendingCheckinProgramId] = useState<string | null>(null);
+  const [isProgramScannerOpen, setIsProgramScannerOpen] = useState<boolean>(false);
+  const [checkinNotice, setCheckinNotice] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [isCheckingIn, setIsCheckingIn] = useState<boolean>(false);
+
+  // Pick up a ?checkin=<programId> link from a scanned program QR (opened via the device's
+  // native camera app, outside this app) once on load, then strip it from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkinId = params.get('checkin');
+    if (checkinId) {
+      setPendingCheckinProgramId(checkinId);
+      params.delete('checkin');
+      const newSearch = params.toString();
+      window.history.replaceState({}, '', window.location.pathname + (newSearch ? `?${newSearch}` : ''));
+    }
+  }, []);
+
+  const performCheckIn = async (programId: string) => {
+    if (!sessionUser || sessionUser.type !== 'synced_profile' || !sessionUser.profile) {
+      setCheckinNotice({ message: "Please log in to your youth portal account first, then scan the code again.", type: 'error' });
+      return;
+    }
+    setIsCheckingIn(true);
+    try {
+      const result = await db.checkInAttendance(
+        sessionUser.profile.id,
+        sessionUser.profile.email,
+        sessionUser.profile.dob,
+        programId
+      );
+      if (result.success) {
+        setCheckinNotice({
+          message: result.alreadyCheckedIn
+            ? `You're already checked into "${result.programTitle}".`
+            : `Checked in to "${result.programTitle}" successfully!`,
+          type: result.alreadyCheckedIn ? 'info' : 'success'
+        });
+      } else if (result.error === 'PROGRAM_NOT_ACTIVE') {
+        setCheckinNotice({ message: `"${result.programTitle}" isn't currently active for check-in.`, type: 'error' });
+      } else {
+        setCheckinNotice({ message: "Couldn't check you in. Please try again.", type: 'error' });
+      }
+    } catch (err) {
+      console.error(err);
+      setCheckinNotice({ message: "An error occurred while checking in. Please try again.", type: 'error' });
+    } finally {
+      setIsCheckingIn(false);
+    }
+  };
+
+  // Complete a pending check-in once the resident is (or becomes) logged in
+  useEffect(() => {
+    if (pendingCheckinProgramId && sessionUser?.type === 'synced_profile' && sessionUser.profile) {
+      const programId = pendingCheckinProgramId;
+      setPendingCheckinProgramId(null);
+      performCheckIn(programId);
+    }
+  }, [pendingCheckinProgramId, sessionUser]);
+
+  const handleProgramQrDetected = (rawValue: string) => {
+    setIsProgramScannerOpen(false);
+    const programId = extractProgramIdFromScan(rawValue);
+    if (!programId) {
+      setCheckinNotice({ message: "Unrecognized QR code.", type: 'error' });
+      return;
+    }
+    performCheckIn(programId);
+  };
 
   // Update Contacts States
   const [isEditingContacts, setIsEditingContacts] = useState<boolean>(false);
@@ -1973,8 +2059,11 @@ export default function App() {
                       {/* Right Column: QR Code, System ID, Issue Date */}
                       <div className="col-span-5 flex flex-col justify-start items-center space-y-2.5 pl-2 self-center">
                         <div className="p-1 border border-white/10 bg-white/5 aspect-square w-full max-w-[135px] flex items-center justify-center">
-                          <div className="bg-white p-0.5 w-full h-full">
-                             <QrCode className="w-full h-full text-black" />
+                          <div className="bg-white p-1.5 w-full h-full flex items-center justify-center">
+                            <QRCodeSVG
+                              value={`${window.location.origin}${window.location.pathname}?youth=${sessionUser.profile.id}`}
+                              className="w-full h-full"
+                            />
                           </div>
                         </div>
                         <div className="text-[7px] font-mono text-on-surface-variant/50 space-y-0.5 text-center w-full">
@@ -1985,6 +2074,42 @@ export default function App() {
                     </div>
 
                   </div>
+
+                  {/* Program QR Check-In Box */}
+                  <div className="w-full mt-4 bg-[#1c1b1b]/50 p-5 rounded-xl border border-[#353535]/15 space-y-3 text-left">
+                    <h4 className="text-xs md:text-sm font-black uppercase tracking-widest text-[#e5e2e1] pb-2 border-b border-[#353535]/10">Program Check-In</h4>
+
+                    {checkinNotice && (
+                      <div className={`p-2.5 text-[10px] font-bold rounded-lg border ${
+                        checkinNotice.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+                        checkinNotice.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+                        'bg-primary/10 border-primary/20 text-primary'
+                      }`}>
+                        {checkinNotice.message}
+                      </div>
+                    )}
+
+                    <p className="text-[10px] text-on-surface-variant leading-relaxed">
+                      Scan the QR code displayed at an event or program venue to check yourself in.
+                    </p>
+
+                    <button
+                      onClick={() => { setCheckinNotice(null); setIsProgramScannerOpen(true); }}
+                      disabled={isCheckingIn}
+                      className="w-full bg-primary hover:opacity-95 text-on-primary font-headline font-black text-xs py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 disabled:opacity-50"
+                    >
+                      <QrCode className="w-4 h-4" /> {isCheckingIn ? 'Checking In...' : 'Scan Program QR'}
+                    </button>
+                  </div>
+
+                  {isProgramScannerOpen && (
+                    <QrScannerModal
+                      title="Scan Program QR"
+                      instructions="Point your camera at the program's check-in QR code to mark your attendance."
+                      onDetect={handleProgramQrDetected}
+                      onClose={() => setIsProgramScannerOpen(false)}
+                    />
+                  )}
 
                   {/* Dynamic Contact Details Update Box */}
                   <div className="w-full mt-4 bg-[#1c1b1b]/50 p-5 rounded-xl border border-[#353535]/15 space-y-4 text-left">

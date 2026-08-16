@@ -48,7 +48,11 @@ import {
   Legend
 } from 'recharts';
 import * as db from './lib/db';
-import { purgeAllPiiCache, useNetworkStatus, clearOfflineQueue, ErrorBoundary } from 'shared';
+import { purgeAllPiiCache, useNetworkStatus, clearOfflineQueue, ErrorBoundary, QrScannerModal } from 'shared';
+
+// Public base URL of the web resident portal, used to build QR check-in / profile links.
+// Set VITE_WEB_PORTAL_URL to the deployed Vercel URL once the portal is live.
+const webPortalUrl: string = (import.meta as any).env?.VITE_WEB_PORTAL_URL || 'http://localhost:5174';
 import { hashPassword, verifyPassword, generateTempPassword } from './lib/localAuth';
 import Dashboard from './components/Dashboard';
 import { z } from 'zod';
@@ -759,15 +763,21 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const [purokFilter, setPurokFilter] = useState<string>('All');
-  const [genderFilter, setGenderFilter] = useState<string>('All');
+  const [purokFilter, setPurokFilter] = useState<string[]>([]);
+  const [genderFilter, setGenderFilter] = useState<string[]>([]);
   const [voterFilter, setVoterFilter] = useState<string>('All');
-  const [civilStatusFilter, setCivilStatusFilter] = useState<string>('All');
-  const [workStatusFilter, setWorkStatusFilter] = useState<string>('All');
-  const [classificationFilter, setClassificationFilter] = useState<string>('All');
-  const [educationFilter, setEducationFilter] = useState<string>('All');
-  const [statusFilter, setStatusFilter] = useState<string>('All');
-  const [skillsFilter, setSkillsFilter] = useState<string>('All');
+  const [civilStatusFilter, setCivilStatusFilter] = useState<string[]>([]);
+  const [workStatusFilter, setWorkStatusFilter] = useState<string[]>([]);
+  const [classificationFilter, setClassificationFilter] = useState<string[]>([]);
+  const [educationFilter, setEducationFilter] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [skillsFilter, setSkillsFilter] = useState<string[]>([]);
+  const [ageMinFilter, setAgeMinFilter] = useState<string>('');
+  const [ageMaxFilter, setAgeMaxFilter] = useState<string>('');
+
+  // Bumped only when the user clicks "Search" on the filter panel or resets filters,
+  // so selecting multiple checkbox options doesn't fire a query per click.
+  const [filterTrigger, setFilterTrigger] = useState<number>(0);
 
   // Pagination States
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -775,7 +785,7 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearchQuery, purokFilter, genderFilter, voterFilter, civilStatusFilter, workStatusFilter, classificationFilter, educationFilter, statusFilter, skillsFilter]);
+  }, [debouncedSearchQuery, filterTrigger]);
   
   // Selected Profile for Detail View (Bento Grid)
   const [selectedYouthId, setSelectedYouthId] = useState<string | null>(null);
@@ -865,22 +875,57 @@ export default function App() {
     title: '', description: '', category: 'Education', startDate: '', endDate: '', status: 'Draft'
   });
 
-  // Selected Program for Attendance Simulation
-  const [selectedAttendanceProgram, setSelectedAttendanceProgram] = useState<string>("Linggo ng Kabataan 2024 - Sports Fest");
-  const [attendanceRecords, setAttendanceRecords] = useState<{ id: string; name: string; purok: string; timeIn: string; status: 'Present' | 'Absent' }[]>([]);
+  // Selected Program (by id) for the Attendance Logger
+  const [selectedAttendanceProgram, setSelectedAttendanceProgram] = useState<string>('');
+  const [attendanceRecords, setAttendanceRecords] = useState<db.AttendanceLogEntry[]>([]);
+  const [isYouthScannerOpen, setIsYouthScannerOpen] = useState<boolean>(false);
 
-  // Dynamically update attendance logs when profiles are fetched
+  // Default to the first Active program once programs load
   useEffect(() => {
-    if (youthProfiles.length > 0 && attendanceRecords.length === 0) {
-      setAttendanceRecords(youthProfiles.map((p, idx) => ({
-        id: p.id,
-        name: `${p.firstName} ${p.lastName}`,
-        purok: p.purok,
-        timeIn: idx === 2 ? '--:--' : `08:${15 + idx * 15} AM`,
-        status: idx === 2 ? 'Absent' : 'Present'
-      })));
+    if (!selectedAttendanceProgram && programs.length > 0) {
+      const activeProgram = programs.find(p => p.status === 'Active') || programs[0];
+      setSelectedAttendanceProgram(activeProgram.id);
     }
-  }, [youthProfiles]);
+  }, [programs, selectedAttendanceProgram]);
+
+  const fetchAttendanceForSelectedProgram = async () => {
+    if (!selectedAttendanceProgram) return;
+    try {
+      const records = await db.getAttendanceForProgram(selectedAttendanceProgram);
+      setAttendanceRecords(records);
+    } catch (err) {
+      console.error("Error loading attendance records:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'attendance' && selectedAttendanceProgram) {
+      fetchAttendanceForSelectedProgram();
+    }
+  }, [activeTab, selectedAttendanceProgram]);
+
+  // Live-refresh the ledger when a web resident scans the program QR and checks themselves in
+  useEffect(() => {
+    if (activeTab !== 'attendance' || !selectedAttendanceProgram || !db.isSupabaseConfigured || !db.supabase) {
+      return;
+    }
+    const channel = db.supabase
+      .channel(`attendance-${selectedAttendanceProgram}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance', filter: `program_id=eq.${selectedAttendanceProgram}` },
+        () => {
+          fetchAttendanceForSelectedProgram();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (db.supabase) {
+        db.supabase.removeChannel(channel);
+      }
+    };
+  }, [activeTab, selectedAttendanceProgram]);
 
   // Audio simulation for scanning beeps
   const playScanBeep = () => {
@@ -1153,7 +1198,9 @@ export default function App() {
         youthClassification: classificationFilter,
         educationLevel: educationFilter,
         status: statusFilter,
-        skill: skillsFilter
+        skill: skillsFilter,
+        ageMin: ageMinFilter.trim() !== '' ? Number(ageMinFilter) : undefined,
+        ageMax: ageMaxFilter.trim() !== '' ? Number(ageMaxFilter) : undefined
       });
       setPaginatedProfiles(result.profiles);
       setTotalProfilesCount(result.totalCount);
@@ -1178,63 +1225,66 @@ export default function App() {
     activeTab,
     currentPage,
     debouncedSearchQuery,
-    purokFilter,
-    genderFilter,
-    voterFilter,
-    civilStatusFilter,
-    workStatusFilter,
-    classificationFilter,
-    educationFilter,
-    statusFilter,
-    skillsFilter,
+    filterTrigger,
     isAuthenticated
   ]);
 
-  const handleSimulateQRScan = () => {
-    // Find an absent youth to check in
-    const absentYouth = attendanceRecords.find(record => record.status === 'Absent');
-    
-    if (absentYouth) {
+  const handleManualCheckIn = async (youthId: string, youthName: string) => {
+    const ok = await db.checkInYouth(selectedAttendanceProgram, youthId);
+    if (ok) {
       playScanBeep();
-      // Mark as Present
-      setAttendanceRecords(prev => prev.map(rec => {
-        if (rec.id === absentYouth.id) {
-          const now = new Date();
-          const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          return { ...rec, status: 'Present', timeIn: timeString };
-        }
-        return rec;
-      }));
-
-      // Update in-memory youth metrics
-      setYouthProfiles(prev => prev.map(y => {
-        if (y.id === absentYouth.id) {
-          return {
-            ...y,
-            participationRate: Math.min(y.participationRate + 2, 100)
-          };
-        }
-        return y;
-      }));
-
-      // Increment present count in program
-      setPrograms(prev => prev.map(p => {
-        if (p.title === selectedAttendanceProgram) {
-          return { ...p, presentCount: p.presentCount + 1 };
-        }
-        return p;
-      }));
-
-      setScanNotification({
-        message: `APPROVED: ${absentYouth.name} successfully checked into ${selectedAttendanceProgram}!`,
-        type: 'success'
-      });
+      await fetchAttendanceForSelectedProgram();
+      setScanNotification({ message: `APPROVED: ${youthName} successfully checked in!`, type: 'success' });
     } else {
-      setScanNotification({
-        message: "SYSTEM NOTE: All active simulated attendees are already marked present.",
-        type: 'info'
-      });
+      setScanNotification({ message: `Failed to check in ${youthName}. Please try again.`, type: 'error' });
     }
+  };
+
+  const handleManualCheckOut = async (youthId: string, youthName: string) => {
+    const ok = await db.checkOutYouth(selectedAttendanceProgram, youthId);
+    if (ok) {
+      await fetchAttendanceForSelectedProgram();
+      setScanNotification({ message: `REMOVED LOG: Checked out ${youthName}.`, type: 'info' });
+    } else {
+      setScanNotification({ message: `Failed to check out ${youthName}. Please try again.`, type: 'error' });
+    }
+  };
+
+  // Extracts a youth id from a scanned personal QR, which encodes either a bare UUID or a
+  // "<webPortalUrl>?youth=<id>" deep link (see the QR rendered on the resident's web profile).
+  const extractYouthIdFromScan = (raw: string): string | null => {
+    const trimmed = raw.trim();
+    try {
+      const url = new URL(trimmed);
+      const fromQuery = url.searchParams.get('youth');
+      if (fromQuery) return fromQuery;
+    } catch (_) {
+      // not a URL, fall through to treating it as a bare id
+    }
+    return trimmed || null;
+  };
+
+  const handleYouthQrDetected = async (rawValue: string) => {
+    setIsYouthScannerOpen(false);
+    const youthId = extractYouthIdFromScan(rawValue);
+    if (!youthId) {
+      setScanNotification({ message: "Unrecognized QR code.", type: 'error' });
+      return;
+    }
+
+    const matched = attendanceRecords.find(r => r.youthId === youthId);
+    if (!matched) {
+      setScanNotification({ message: "This resident isn't registered under the current program's roster.", type: 'error' });
+      return;
+    }
+
+    if (matched.status === 'Present') {
+      playScanBeep();
+      setScanNotification({ message: `${matched.name} is already checked in (${matched.timeIn}).`, type: 'info' });
+      return;
+    }
+
+    await handleManualCheckIn(youthId, matched.name);
   };
 
 
@@ -1341,15 +1391,22 @@ export default function App() {
 
   const handleResetFilters = () => {
     setSearchQuery('');
-    setPurokFilter('All');
-    setGenderFilter('All');
+    setPurokFilter([]);
+    setGenderFilter([]);
     setVoterFilter('All');
-    setCivilStatusFilter('All');
-    setWorkStatusFilter('All');
-    setClassificationFilter('All');
-    setEducationFilter('All');
-    setStatusFilter('All');
-    setSkillsFilter('All');
+    setCivilStatusFilter([]);
+    setWorkStatusFilter([]);
+    setClassificationFilter([]);
+    setEducationFilter([]);
+    setStatusFilter([]);
+    setSkillsFilter([]);
+    setAgeMinFilter('');
+    setAgeMaxFilter('');
+    setFilterTrigger(t => t + 1);
+  };
+
+  const handleApplyFilters = () => {
+    setFilterTrigger(t => t + 1);
   };
 
   const handleExportToCSV = async () => {
@@ -1495,11 +1552,6 @@ export default function App() {
     const saved = await db.saveProfile(addedProfile);
     logActivity('INSERT', 'youth_profiles', null, { id: saved.id, name: `${saved.firstName} ${saved.lastName}`, purok: saved.purok });
     setYouthProfiles([saved, ...youthProfiles]);
-
-    setAttendanceRecords(prev => [
-      ...prev,
-      { id: saved.id, name: `${saved.firstName} ${saved.lastName}`, purok: saved.purok, timeIn: "--:--", status: "Absent" }
-    ]);
 
     setNewYouth({
       firstName: '',
@@ -1947,18 +1999,6 @@ export default function App() {
     try {
       const saved = await db.saveProfilesBulk(parsedProfiles);
       logActivity('INSERT', 'youth_profiles (BULK)', null, { count: saved.length, message: `Bulk imported ${saved.length} profiles` });
-      
-      // Also add to active attendance records
-      setAttendanceRecords(prev => [
-        ...prev,
-        ...saved.map(s => ({
-          id: s.id,
-          name: `${s.firstName} ${s.lastName}`,
-          purok: s.purok,
-          timeIn: "--:--",
-          status: "Absent" as const
-        }))
-      ]);
 
       await loadDatabaseData();
       setActiveTab('youth-list');
@@ -2368,8 +2408,6 @@ export default function App() {
       <TopBar
         activeTab={activeTab}
         isLoading={isLoading}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
         isOnline={isOnline}
         isSyncing={isSyncing}
         pendingCount={pendingCount}
@@ -2490,6 +2528,8 @@ export default function App() {
               currentPage={currentPage}
               setCurrentPage={setCurrentPage}
               pageSize={pageSize}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
               puroks={puroks}
               purokFilter={purokFilter}
               setPurokFilter={setPurokFilter}
@@ -2509,8 +2549,13 @@ export default function App() {
               setStatusFilter={setStatusFilter}
               skillsFilter={skillsFilter}
               setSkillsFilter={setSkillsFilter}
+              ageMinFilter={ageMinFilter}
+              setAgeMinFilter={setAgeMinFilter}
+              ageMaxFilter={ageMaxFilter}
+              setAgeMaxFilter={setAgeMaxFilter}
               skillSuggestions={skillSuggestions}
               onResetFilters={handleResetFilters}
+              onApplyFilters={handleApplyFilters}
               onExportToCSV={handleExportToCSV}
               onArchive={handleArchiveYouth}
               setActiveTab={setActiveTab}
@@ -2667,18 +2712,27 @@ export default function App() {
             />
           )}
 
-          {/* --- DISABLED MODULE: 3. ATTENDANCE LOGGER --- */}
+          {/* --- MODULE: 3. ATTENDANCE LOGGER --- */}
           {activeTab === 'attendance' && selectedYouthId === null && (
             <AttendanceLoggerView
               programs={programs}
               selectedAttendanceProgram={selectedAttendanceProgram}
               setSelectedAttendanceProgram={setSelectedAttendanceProgram}
               attendanceRecords={attendanceRecords}
-              setAttendanceRecords={setAttendanceRecords}
-              onSimulateQRScan={handleSimulateQRScan}
-              playScanBeep={playScanBeep}
-              setScanNotification={setScanNotification}
+              webPortalUrl={webPortalUrl}
+              onManualCheckIn={handleManualCheckIn}
+              onManualCheckOut={handleManualCheckOut}
+              onOpenYouthScanner={() => setIsYouthScannerOpen(true)}
               currentUserRole={currentUser.role}
+            />
+          )}
+
+          {isYouthScannerOpen && (
+            <QrScannerModal
+              title="Scan Resident QR"
+              instructions="Point the camera at the resident's personal QR (shown on their web portal profile) to check them into the selected program."
+              onDetect={handleYouthQrDetected}
+              onClose={() => setIsYouthScannerOpen(false)}
             />
           )}
 

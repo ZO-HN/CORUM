@@ -363,6 +363,56 @@ export const updateProfileContacts = async (
   return true;
 };
 
+export interface CheckInResult {
+  success: boolean;
+  alreadyCheckedIn?: boolean;
+  programTitle?: string;
+  error?: 'PROFILE_NOT_FOUND' | 'INVALID_SESSION' | 'PROGRAM_NOT_FOUND' | 'PROGRAM_NOT_ACTIVE' | 'OFFLINE';
+}
+
+// Self check-in via a scanned program QR. Re-derives the DOB-based passcode from the cached
+// session profile server-side (same re-verification contract as updateProfileContacts), so the
+// resident never has to log in again just to check in.
+export const checkInAttendance = async (
+  id: string,
+  email: string,
+  dob: string,
+  programId: string
+): Promise<CheckInResult> => {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const formatDobToPasscode = (dobStr: string): string => {
+        if (!dobStr) return '';
+        const parts = dobStr.split('-');
+        if (parts.length === 3) {
+          return `${parts[1]}${parts[2]}${parts[0]}`;
+        }
+        return dobStr.replace(/\D/g, '');
+      };
+
+      const passcode = formatDobToPasscode(dob);
+
+      const { data, error } = await supabase.rpc('check_in_attendance', {
+        p_id: id,
+        p_email: email,
+        p_passcode: passcode,
+        p_program_id: programId
+      });
+
+      if (error) {
+        console.error("Error checking in via RPC:", error);
+        return { success: false, error: 'PROGRAM_NOT_FOUND' };
+      }
+      return data as CheckInResult;
+    } catch (err) {
+      console.error(err);
+      return { success: false, error: 'PROGRAM_NOT_FOUND' };
+    }
+  }
+
+  return { success: false, error: 'OFFLINE' };
+};
+
 export interface ResidentAccessResult {
   type: 'synced_profile' | 'pending_submission';
   profile?: YouthProfile;

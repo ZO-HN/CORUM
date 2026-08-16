@@ -80,15 +80,17 @@ export interface GetProfilesOptions {
   page?: number;
   pageSize?: number;
   search?: string;
-  purok?: string;
-  gender?: string;
+  purok?: string[];
+  gender?: string[];
   isRegisteredVoter?: boolean;
-  civilStatus?: string;
-  workStatus?: string;
-  youthClassification?: string;
-  educationLevel?: string;
-  status?: string;
-  skill?: string;
+  civilStatus?: string[];
+  workStatus?: string[];
+  youthClassification?: string[];
+  educationLevel?: string[];
+  status?: string[];
+  skill?: string[];
+  ageMin?: number;
+  ageMax?: number;
 }
 
 export interface PaginatedProfiles {
@@ -109,7 +111,9 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
     youthClassification,
     educationLevel,
     status,
-    skill
+    skill,
+    ageMin,
+    ageMax
   } = options;
 
   if (isSupabaseConfigured && supabase) {
@@ -117,32 +121,38 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
       .from('youth_profiles')
       .select('*', { count: 'exact' });
 
-    if (purok && purok !== 'All') {
-      query = query.eq('purok', purok);
+    if (purok && purok.length > 0) {
+      query = query.in('purok', purok);
     }
-    if (gender && gender !== 'All') {
-      query = query.eq('gender', gender);
+    if (gender && gender.length > 0) {
+      query = query.in('gender', gender);
     }
     if (isRegisteredVoter !== undefined) {
       query = query.eq('is_registered_voter', isRegisteredVoter);
     }
-    if (civilStatus && civilStatus !== 'All') {
-      query = query.eq('civil_status', civilStatus);
+    if (civilStatus && civilStatus.length > 0) {
+      query = query.in('civil_status', civilStatus);
     }
-    if (workStatus && workStatus !== 'All') {
-      query = query.eq('work_status', workStatus);
+    if (workStatus && workStatus.length > 0) {
+      query = query.in('work_status', workStatus);
     }
-    if (youthClassification && youthClassification !== 'All') {
-      query = query.eq('youth_classification', youthClassification);
+    if (youthClassification && youthClassification.length > 0) {
+      query = query.in('youth_classification', youthClassification);
     }
-    if (educationLevel && educationLevel !== 'All') {
-      query = query.eq('education_level', educationLevel);
+    if (educationLevel && educationLevel.length > 0) {
+      query = query.in('education_level', educationLevel);
     }
-    if (status && status !== 'All') {
-      query = query.eq('status', status);
+    if (status && status.length > 0) {
+      query = query.in('status', status);
     }
-    if (skill && skill !== 'All') {
-      query = query.contains('skills', [skill]);
+    if (skill && skill.length > 0) {
+      query = query.overlaps('skills', skill);
+    }
+    if (ageMin !== undefined) {
+      query = query.gte('age', ageMin);
+    }
+    if (ageMax !== undefined) {
+      query = query.lte('age', ageMax);
     }
 
     if (search && search.trim() !== '') {
@@ -187,32 +197,38 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
   const allProfiles = await getLocalData<YouthProfile>('kk_youth_profiles', initialYouthProfiles);
   let filtered = allProfiles;
 
-  if (purok && purok !== 'All') {
-    filtered = filtered.filter(p => p.purok === purok);
+  if (purok && purok.length > 0) {
+    filtered = filtered.filter(p => purok.includes(p.purok));
   }
-  if (gender && gender !== 'All') {
-    filtered = filtered.filter(p => p.gender === gender);
+  if (gender && gender.length > 0) {
+    filtered = filtered.filter(p => gender.includes(p.gender));
   }
   if (isRegisteredVoter !== undefined) {
     filtered = filtered.filter(p => p.isRegisteredVoter === isRegisteredVoter);
   }
-  if (civilStatus && civilStatus !== 'All') {
-    filtered = filtered.filter(p => p.civilStatus === civilStatus);
+  if (civilStatus && civilStatus.length > 0) {
+    filtered = filtered.filter(p => civilStatus.includes(p.civilStatus));
   }
-  if (workStatus && workStatus !== 'All') {
-    filtered = filtered.filter(p => p.workStatus === workStatus);
+  if (workStatus && workStatus.length > 0) {
+    filtered = filtered.filter(p => !!p.workStatus && workStatus.includes(p.workStatus));
   }
-  if (youthClassification && youthClassification !== 'All') {
-    filtered = filtered.filter(p => p.youthClassification === youthClassification);
+  if (youthClassification && youthClassification.length > 0) {
+    filtered = filtered.filter(p => !!p.youthClassification && youthClassification.includes(p.youthClassification));
   }
-  if (educationLevel && educationLevel !== 'All') {
-    filtered = filtered.filter(p => p.educationLevel === educationLevel);
+  if (educationLevel && educationLevel.length > 0) {
+    filtered = filtered.filter(p => educationLevel.includes(p.educationLevel));
   }
-  if (status && status !== 'All') {
-    filtered = filtered.filter(p => p.status === status);
+  if (status && status.length > 0) {
+    filtered = filtered.filter(p => status.includes(p.status));
   }
-  if (skill && skill !== 'All') {
-    filtered = filtered.filter(p => (p.skills || []).includes(skill));
+  if (skill && skill.length > 0) {
+    filtered = filtered.filter(p => (p.skills || []).some(s => skill.includes(s)));
+  }
+  if (ageMin !== undefined) {
+    filtered = filtered.filter(p => p.age >= ageMin);
+  }
+  if (ageMax !== undefined) {
+    filtered = filtered.filter(p => p.age <= ageMax);
   }
 
   if (search && search.trim() !== '') {
@@ -230,6 +246,104 @@ export const getProfilesPaginated = async (options: GetProfilesOptions): Promise
   const slice = filtered.slice(from, from + pageSize);
 
   return { profiles: slice, totalCount };
+};
+
+export interface AttendanceLogEntry {
+  attendanceId: string;
+  youthId: string;
+  name: string;
+  purok: string;
+  timeIn: string;
+  status: 'Present' | 'Absent' | 'Excused';
+}
+
+// Real attendance rows for a program, joined with youth profile display fields.
+// Registrants with no attendance row yet are surfaced as "Absent" placeholders so the
+// ledger can still offer a manual "Check In" action for them.
+export const getAttendanceForProgram = async (programId: string): Promise<AttendanceLogEntry[]> => {
+  if (isSupabaseConfigured && supabase) {
+    const [attendanceRes, profilesRes] = await Promise.all([
+      supabase.from('attendance').select('*').eq('program_id', programId),
+      supabase.from('youth_profiles').select('id, first_name, last_name, purok').eq('status', 'Active')
+    ]);
+
+    if (attendanceRes.error || profilesRes.error) {
+      console.error("Error loading attendance for program:", attendanceRes.error || profilesRes.error);
+      return [];
+    }
+
+    const attendanceByYouth = new Map((attendanceRes.data || []).map(a => [a.youth_id, a]));
+
+    return (profilesRes.data || []).map(p => {
+      const rec = attendanceByYouth.get(p.id);
+      return {
+        attendanceId: rec?.id || '',
+        youthId: p.id,
+        name: `${p.first_name} ${p.last_name}`,
+        purok: p.purok,
+        timeIn: rec ? new Date(rec.time_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--',
+        status: rec ? rec.status : 'Absent'
+      };
+    });
+  }
+
+  const attendance = await getLocalData<{ id: string; program_id: string; youth_id: string; time_in: string; status: string }>('kk_attendance', []);
+  const profiles = await getLocalData<YouthProfile>('kk_youth_profiles', initialYouthProfiles);
+  const attendanceByYouth = new Map(attendance.filter(a => a.program_id === programId).map(a => [a.youth_id, a]));
+
+  return profiles.filter(p => p.status === 'Active').map(p => {
+    const rec = attendanceByYouth.get(p.id);
+    return {
+      attendanceId: rec?.id || '',
+      youthId: p.id,
+      name: `${p.firstName} ${p.lastName}`,
+      purok: p.purok,
+      timeIn: rec ? new Date(rec.time_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--',
+      status: (rec?.status as AttendanceLogEntry['status']) || 'Absent'
+    };
+  });
+};
+
+// Staff-side manual/scanned check-in (desktop is authenticated as admin/staff, so this writes
+// directly -- resident self-check-in via a scanned program QR instead goes through the
+// check_in_attendance RPC from the web portal, which re-verifies the resident's session).
+export const checkInYouth = async (programId: string, youthId: string): Promise<boolean> => {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('attendance')
+      .upsert({ program_id: programId, youth_id: youthId, status: 'Present', scan_method: 'Manual' }, { onConflict: 'program_id,youth_id' });
+    if (error) {
+      console.error("Error checking in youth:", error);
+      return false;
+    }
+    return true;
+  }
+
+  const attendance = await getLocalData<any>('kk_attendance', []);
+  const existingIdx = attendance.findIndex(a => a.program_id === programId && a.youth_id === youthId);
+  const row = { id: existingIdx >= 0 ? attendance[existingIdx].id : crypto.randomUUID(), program_id: programId, youth_id: youthId, time_in: new Date().toISOString(), status: 'Present', scan_method: 'Manual' };
+  if (existingIdx >= 0) attendance[existingIdx] = row; else attendance.push(row);
+  await setLocalData('kk_attendance', attendance);
+  return true;
+};
+
+export const checkOutYouth = async (programId: string, youthId: string): Promise<boolean> => {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('attendance')
+      .delete()
+      .eq('program_id', programId)
+      .eq('youth_id', youthId);
+    if (error) {
+      console.error("Error checking out youth:", error);
+      return false;
+    }
+    return true;
+  }
+
+  const attendance = await getLocalData<any>('kk_attendance', []);
+  await setLocalData('kk_attendance', attendance.filter(a => !(a.program_id === programId && a.youth_id === youthId)));
+  return true;
 };
 
 export const saveProfile = async (profile: Omit<YouthProfile, 'participationRate' | 'joinedDate'>): Promise<YouthProfile> => {

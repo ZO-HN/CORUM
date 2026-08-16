@@ -5,5 +5,6 @@ export * from './profileMapper';
 export * from './useOfflineSync';
 export * from './useNetworkStatus';
 export * from './ErrorBoundary';
+export * from './QrScannerModal';
 export * from './types';
 export * from './seeds';

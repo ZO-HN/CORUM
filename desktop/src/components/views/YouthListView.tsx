@@ -7,6 +7,8 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  Search,
+  SlidersHorizontal,
 } from 'lucide-react';
 import * as db from '../../lib/db';
 import { formatYouthName } from 'shared';
@@ -17,34 +19,72 @@ interface YouthListViewProps {
   currentPage: number;
   setCurrentPage: React.Dispatch<React.SetStateAction<number>>;
   pageSize: number;
-  // Filters
+  // Search
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  // Filters (multi-select, empty array = "All")
   puroks: string[];
-  purokFilter: string;
-  setPurokFilter: (v: string) => void;
-  genderFilter: string;
-  setGenderFilter: (v: string) => void;
+  purokFilter: string[];
+  setPurokFilter: (v: string[]) => void;
+  genderFilter: string[];
+  setGenderFilter: (v: string[]) => void;
   voterFilter: string;
   setVoterFilter: (v: string) => void;
-  civilStatusFilter: string;
-  setCivilStatusFilter: (v: string) => void;
-  workStatusFilter: string;
-  setWorkStatusFilter: (v: string) => void;
-  classificationFilter: string;
-  setClassificationFilter: (v: string) => void;
-  educationFilter: string;
-  setEducationFilter: (v: string) => void;
-  statusFilter: string;
-  setStatusFilter: (v: string) => void;
-  skillsFilter: string;
-  setSkillsFilter: (v: string) => void;
+  civilStatusFilter: string[];
+  setCivilStatusFilter: (v: string[]) => void;
+  workStatusFilter: string[];
+  setWorkStatusFilter: (v: string[]) => void;
+  classificationFilter: string[];
+  setClassificationFilter: (v: string[]) => void;
+  educationFilter: string[];
+  setEducationFilter: (v: string[]) => void;
+  statusFilter: string[];
+  setStatusFilter: (v: string[]) => void;
+  skillsFilter: string[];
+  setSkillsFilter: (v: string[]) => void;
+  ageMinFilter: string;
+  setAgeMinFilter: (v: string) => void;
+  ageMaxFilter: string;
+  setAgeMaxFilter: (v: string) => void;
   skillSuggestions: string[];
   // Actions
   onResetFilters: () => void;
+  onApplyFilters: () => void;
   onExportToCSV: () => void;
   onArchive: (id: string) => void;
   setActiveTab: (tab: string) => void;
   setSelectedYouthId: (id: string | null) => void;
 }
+
+const multiSelectClass = "bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-1.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer w-full h-24";
+
+interface MultiSelectProps {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+}
+
+const MultiSelectFilter: React.FC<MultiSelectProps> = ({ label, options, selected, onChange }) => (
+  <div className="flex flex-col gap-1">
+    <div className="flex items-center justify-between">
+      <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">{label}</label>
+      {selected.length > 0 && (
+        <span className="text-[9px] font-black text-primary">{selected.length} selected</span>
+      )}
+    </div>
+    <select
+      multiple
+      value={selected}
+      onChange={(e) => onChange(Array.from(e.target.selectedOptions).map(o => o.value))}
+      className={multiSelectClass}
+    >
+      {options.map(o => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  </div>
+);
 
 const YouthListView: React.FC<YouthListViewProps> = ({
   paginatedProfiles,
@@ -52,6 +92,8 @@ const YouthListView: React.FC<YouthListViewProps> = ({
   currentPage,
   setCurrentPage,
   pageSize,
+  searchQuery,
+  setSearchQuery,
   puroks,
   purokFilter,
   setPurokFilter,
@@ -71,8 +113,13 @@ const YouthListView: React.FC<YouthListViewProps> = ({
   setStatusFilter,
   skillsFilter,
   setSkillsFilter,
+  ageMinFilter,
+  setAgeMinFilter,
+  ageMaxFilter,
+  setAgeMaxFilter,
   skillSuggestions,
   onResetFilters,
+  onApplyFilters,
   onExportToCSV,
   onArchive,
   setActiveTab,
@@ -86,23 +133,23 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                     <Filter className="w-5 h-5 text-primary" />
                     Youth Profiling Database
                   </h3>
-                  
+
                   <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                    <button 
+                    <button
                       onClick={onResetFilters}
                       className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 active:scale-95 transition-all shadow-md"
                     >
                       <X className="w-4 h-4" /> RESET FILTERS
                     </button>
 
-                    <button 
+                    <button
                       onClick={onExportToCSV}
                       className="bg-surface-container-high border border-[#353535]/15 hover:bg-surface-container-highest text-on-surface text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 active:scale-95 transition-all shadow-md"
                     >
                       <Download className="w-4 h-4 text-primary" /> EXPORT TO EXCEL
                     </button>
 
-                    <button 
+                    <button
                       onClick={() => setActiveTab('add-youth')}
                       className="bg-primary text-on-primary text-xs font-extrabold px-4 py-2.5 rounded-lg flex items-center gap-1.5 hover:opacity-90 active:scale-95 transition-all shadow-md ml-auto md:ml-0"
                     >
@@ -111,41 +158,80 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                   </div>
                 </div>
 
-                {/* Filter Selects Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-3 pt-2">
+                {/* Search Bar (moved from top navbar) */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant w-4 h-4" />
+                  <input
+                    type="text"
+                    placeholder="Search by name, email, or contact number..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="bg-surface-container-high border-none rounded-lg pl-10 pr-4 py-2.5 text-sm w-full focus:ring-1 focus:ring-primary/50 transition-all text-on-surface placeholder:text-on-surface-variant/40"
+                  />
+                </div>
+
+                {/* Age Range Filter */}
+                <div className="flex items-end gap-3 flex-wrap">
                   <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Purok Area</label>
-                    <select 
-                      value={purokFilter}
-                      onChange={(e) => setPurokFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Puroks</option>
-                      {puroks.map(p => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
+                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Age Min</label>
+                    <input
+                      type="number"
+                      min={15}
+                      max={30}
+                      value={ageMinFilter}
+                      onChange={(e) => setAgeMinFilter(e.target.value)}
+                      placeholder="15"
+                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 w-24 focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Age Max</label>
+                    <input
+                      type="number"
+                      min={15}
+                      max={30}
+                      value={ageMaxFilter}
+                      onChange={(e) => setAgeMaxFilter(e.target.value)}
+                      placeholder="30"
+                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 w-24 focus:ring-1 focus:ring-primary/50"
+                    />
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Gender Sex</label>
-                    <select 
-                      value={genderFilter}
-                      onChange={(e) => setGenderFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Genders</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                    </select>
-                  </div>
+                  <button
+                    onClick={onApplyFilters}
+                    className="bg-primary text-on-primary text-xs font-extrabold px-5 py-2.5 rounded-lg flex items-center gap-1.5 hover:opacity-90 active:scale-95 transition-all shadow-md ml-auto"
+                  >
+                    <SlidersHorizontal className="w-4 h-4" /> SEARCH FILTERS
+                  </button>
+                </div>
+
+                {/* Multi-select Filters Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 pt-2">
+                  <MultiSelectFilter
+                    label="Purok Area"
+                    selected={purokFilter}
+                    onChange={setPurokFilter}
+                    options={puroks.map(p => ({ value: p, label: p }))}
+                  />
+
+                  <MultiSelectFilter
+                    label="Gender"
+                    selected={genderFilter}
+                    onChange={setGenderFilter}
+                    options={[
+                      { value: 'Male', label: 'Male' },
+                      { value: 'Female', label: 'Female' },
+                      { value: 'LGBTQIA+', label: 'LGBTQIA+' },
+                      { value: 'Unlabeled', label: 'Unlabeled' },
+                    ]}
+                  />
 
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Voter Status</label>
-                    <select 
+                    <select
                       value={voterFilter}
                       onChange={(e) => setVoterFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
+                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer h-24"
                     >
                       <option value="All">All Voters</option>
                       <option value="Voter">Voter Only</option>
@@ -153,114 +239,101 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                     </select>
                   </div>
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Civil Status</label>
-                    <select 
-                      value={civilStatusFilter}
-                      onChange={(e) => setCivilStatusFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Civil Status</option>
-                      <option value="Single">Single</option>
-                      <option value="Married">Married</option>
-                      <option value="Widowed">Widowed</option>
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Civil Status"
+                    selected={civilStatusFilter}
+                    onChange={setCivilStatusFilter}
+                    options={[
+                      { value: 'Single', label: 'Single' },
+                      { value: 'Married', label: 'Married' },
+                      { value: 'Widowed', label: 'Widowed' },
+                    ]}
+                  />
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Employment</label>
-                    <select 
-                      value={workStatusFilter}
-                      onChange={(e) => setWorkStatusFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Employment</option>
-                      <option value="Unemployed">Unemployed</option>
-                      <option value="Employed">Employed</option>
-                      <option value="Self-employed">Self-employed</option>
-                      <option value="Currently looking for a job">Looking for job</option>
-                      <option value="Not interested looking for a job">Not interested</option>
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Employment"
+                    selected={workStatusFilter}
+                    onChange={setWorkStatusFilter}
+                    options={[
+                      { value: 'Unemployed', label: 'Unemployed' },
+                      { value: 'Employed', label: 'Employed' },
+                      { value: 'Self-employed', label: 'Self-employed' },
+                      { value: 'Currently looking for a job', label: 'Looking for job' },
+                      { value: 'Not interested looking for a job', label: 'Not interested' },
+                    ]}
+                  />
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Classification</label>
-                    <select 
-                      value={classificationFilter}
-                      onChange={(e) => setClassificationFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Classes</option>
-                      <option value="In School Youth (Nag skwela)">In School</option>
-                      <option value="Out of School Youth (Wala nag Skwela)">Out of School</option>
-                      <option value="Working Youth">Working Youth</option>
-                      <option value="Youth w/ specific needs: PWD">PWD</option>
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Classification"
+                    selected={classificationFilter}
+                    onChange={setClassificationFilter}
+                    options={[
+                      { value: 'In School Youth (Nag skwela)', label: 'In School' },
+                      { value: 'Out of School Youth (Wala nag Skwela)', label: 'Out of School' },
+                      { value: 'Working Youth', label: 'Working Youth' },
+                      { value: 'Youth w/ specific needs: PWD', label: 'PWD' },
+                    ]}
+                  />
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Education Level</label>
-                    <select 
-                      value={educationFilter}
-                      onChange={(e) => setEducationFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Education</option>
-                      <option value="Elementary Level">Elementary Level</option>
-                      <option value="High School Level">High School Level</option>
-                      <option value="High School Graduate">High School Graduate</option>
-                      <option value="College Level">College Level</option>
-                      <option value="College Graduate">College Graduate</option>
-                      <option value="Vocational Graduate">Vocational Graduate</option>
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Education Level"
+                    selected={educationFilter}
+                    onChange={setEducationFilter}
+                    options={[
+                      { value: 'Elementary Level', label: 'Elementary Level' },
+                      { value: 'Elementary Graduate', label: 'Elementary Graduate' },
+                      { value: 'High School Level', label: 'High School Level' },
+                      { value: 'High School Graduate', label: 'High School Graduate' },
+                      { value: 'Vocational Graduate', label: 'Vocational Graduate' },
+                      { value: 'College Level', label: 'College Level' },
+                      { value: 'College Graduate', label: 'College Graduate' },
+                      { value: 'Masters Level', label: 'Masters Level' },
+                      { value: 'Masters Graduate', label: 'Masters Graduate' },
+                      { value: 'Doctorate Level', label: 'Doctorate Level' },
+                      { value: 'Doctorate Graduate', label: 'Doctorate Graduate' },
+                    ]}
+                  />
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Operational</label>
-                    <select 
-                      value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Status</option>
-                      <option value="Active">Active</option>
-                      <option value="Inactive">Inactive</option>
-                      <option value="Archived">Archived</option>
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Operational"
+                    selected={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
+                      { value: 'Active', label: 'Active' },
+                      { value: 'Inactive', label: 'Inactive' },
+                      { value: 'Archived', label: 'Archived' },
+                    ]}
+                  />
 
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">Skills</label>
-                    <select
-                      value={skillsFilter}
-                      onChange={(e) => setSkillsFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
-                    >
-                      <option value="All">All Skills</option>
-                      {skillSuggestions.map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <MultiSelectFilter
+                    label="Skills"
+                    selected={skillsFilter}
+                    onChange={setSkillsFilter}
+                    options={skillSuggestions.map(s => ({ value: s, label: s }))}
+                  />
                 </div>
               </div>
 
               {/* Records Table */}
-              <div className="bg-surface-container-low rounded-xl border border-[#353535]/10 overflow-hidden shadow-xl">
+              <div className="bg-surface-container-low rounded-xl border border-[#353535]/10 shadow-xl">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full text-left border-collapse" style={{ minWidth: '1600px' }}>
                     <thead>
                       <tr className="bg-surface-container-highest/30 border-b border-[#353535]/15">
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Resident Profile</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Purok</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Voter Status</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Civil Status</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Employment</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Classification</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Education & Status</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Skills & Competencies</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Operational</th>
-                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-right">Actions</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Resident Profile</th>
+                        <th className="px-3 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Age</th>
+                        <th className="px-3 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Gender</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Purok</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Voter Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Civil Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Employment</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Classification</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Education Level</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Educational Status</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Program</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Skills & Competencies</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant whitespace-nowrap">Operational</th>
+                        <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-right whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#353535]/10">
@@ -271,41 +344,21 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                             onClick={() => setSelectedYouthId(y.id)}
                             className="hover:bg-surface-variant/20 transition-colors group cursor-pointer"
                           >
-                            <td className="px-6 py-4.5">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-primary/10 group-hover:ring-primary/40 transition-all shrink-0">
-                                  <img src={y.avatarUrl} alt={y.firstName} className="w-full h-full object-cover" />
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-1.5">
-                                    <p className="font-headline font-bold text-sm text-on-surface">
-                                      {formatYouthName(y)}
-                                    </p>
-                                    {y.facebookLink && (
-                                      <a
-                                        href={y.facebookLink.startsWith('http') ? y.facebookLink : `https://${y.facebookLink}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="text-[#1877F2] hover:opacity-80 transition-opacity"
-                                        title="Facebook Profile"
-                                      >
-                                        <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
-                                          <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                                        </svg>
-                                      </a>
-                                    )}
-                                  </div>
-                                  <p className="text-[10px] text-on-surface-variant font-semibold uppercase">
-                                    UID: {y.id} • {y.age} Yrs • {y.gender}
-                                  </p>
-                                </div>
-                              </div>
+                            <td className="px-6 py-4.5 whitespace-nowrap">
+                              <p className="font-headline font-bold text-sm text-on-surface">
+                                {formatYouthName(y)}
+                              </p>
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-3 py-4.5 whitespace-nowrap">
+                              <span className="text-sm font-semibold text-on-surface-variant">{y.age}</span>
+                            </td>
+                            <td className="px-3 py-4.5 whitespace-nowrap">
+                              <span className="text-sm font-semibold text-on-surface-variant">{y.gender}</span>
+                            </td>
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className="text-sm font-semibold text-on-surface-variant">{y.purok}</span>
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
                                 y.isRegisteredVoter
                                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
@@ -314,20 +367,25 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                                 {y.isRegisteredVoter ? `Voter (${y.precinctNumber})` : 'Non-Voter'}
                               </span>
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className="text-sm font-semibold text-on-surface-variant">{y.civilStatus}</span>
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className="text-sm font-semibold text-on-surface-variant">{y.workStatus || 'N/A'}</span>
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className="text-xs font-bold text-on-surface leading-tight">
                                 {y.youthClassification || 'N/A'}
                               </span>
                             </td>
-                            <td className="px-6 py-4.5">
-                              <p className="text-xs font-bold text-on-surface leading-tight">{y.educationLevel}</p>
-                              <p className="text-[10px] text-secondary font-semibold uppercase tracking-tight mt-0.5">{y.educationalStatus}</p>
+                            <td className="px-6 py-4.5 whitespace-nowrap">
+                              <span className="text-xs font-bold text-on-surface leading-tight">{y.educationLevel || 'N/A'}</span>
+                            </td>
+                            <td className="px-6 py-4.5 whitespace-nowrap">
+                              <span className="text-[10px] text-secondary font-semibold uppercase tracking-tight">{y.educationalStatus || 'N/A'}</span>
+                            </td>
+                            <td className="px-6 py-4.5 whitespace-nowrap">
+                              <span className="text-xs text-on-surface-variant">{y.educationSpecify || 'N/A'}</span>
                             </td>
                             <td className="px-6 py-4.5">
                               {y.skills.length > 0 ? (
@@ -347,7 +405,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                                 <span className="text-xs text-on-surface-variant">N/A</span>
                               )}
                             </td>
-                            <td className="px-6 py-4.5">
+                            <td className="px-6 py-4.5 whitespace-nowrap">
                               <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
                                 y.status === 'Active'
                                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
@@ -358,7 +416,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                                 {y.status}
                               </span>
                             </td>
-                            <td className="px-6 py-4.5 text-right">
+                            <td className="px-6 py-4.5 text-right whitespace-nowrap">
                               <div className="flex justify-end gap-2">
                                 <button
                                   onClick={(e) => {
@@ -376,7 +434,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={10} className="px-6 py-10 text-center text-on-surface-variant text-sm font-semibold">
+                          <td colSpan={14} className="px-6 py-10 text-center text-on-surface-variant text-sm font-semibold">
                             No youth profiles found matching specified filters.
                           </td>
                         </tr>

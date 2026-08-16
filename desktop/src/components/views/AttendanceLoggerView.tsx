@@ -1,24 +1,17 @@
 import React from 'react';
-import { Check, QrCode, Zap, Filter, Download, ChevronDown } from 'lucide-react';
+import { QrCode, ScanLine, Filter, Download, ChevronDown } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import * as db from '../../lib/db';
-
-interface AttendanceRecord {
-  id: string;
-  name: string;
-  purok: string;
-  timeIn: string;
-  status: 'Present' | 'Absent';
-}
 
 interface AttendanceLoggerViewProps {
   programs: db.Program[];
   selectedAttendanceProgram: string;
   setSelectedAttendanceProgram: (v: string) => void;
-  attendanceRecords: AttendanceRecord[];
-  setAttendanceRecords: React.Dispatch<React.SetStateAction<AttendanceRecord[]>>;
-  onSimulateQRScan: () => void;
-  playScanBeep: () => void;
-  setScanNotification: (v: { message: string; type: 'success' | 'info' | 'error' } | null) => void;
+  attendanceRecords: db.AttendanceLogEntry[];
+  webPortalUrl: string;
+  onManualCheckIn: (youthId: string, youthName: string) => void;
+  onManualCheckOut: (youthId: string, youthName: string) => void;
+  onOpenYouthScanner: () => void;
   currentUserRole?: string;
 }
 
@@ -27,12 +20,15 @@ export default function AttendanceLoggerView({
   selectedAttendanceProgram,
   setSelectedAttendanceProgram,
   attendanceRecords,
-  setAttendanceRecords,
-  onSimulateQRScan,
-  playScanBeep,
-  setScanNotification,
+  webPortalUrl,
+  onManualCheckIn,
+  onManualCheckOut,
+  onOpenYouthScanner,
   currentUserRole
 }: AttendanceLoggerViewProps) {
+  const activeProgram = programs.find(p => p.id === selectedAttendanceProgram);
+  const checkInUrl = activeProgram ? `${webPortalUrl}/?checkin=${activeProgram.id}` : '';
+
   return (
     <div className="space-y-6 relative min-h-[500px]">
       {/* Opaque overlay with Unavailable message */}
@@ -51,7 +47,7 @@ export default function AttendanceLoggerView({
 
       {/* Controls and Stats */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Selector */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-surface-container-low p-6 rounded-xl border border-[#353535]/15 space-y-4">
@@ -60,13 +56,13 @@ export default function AttendanceLoggerView({
                 Active Sangguniang Kabataan Program
               </label>
               <div className="relative">
-                <select 
+                <select
                   value={selectedAttendanceProgram}
                   onChange={(e) => setSelectedAttendanceProgram(e.target.value)}
                   className="w-full appearance-none bg-surface-container-high border-none rounded-xl py-4 px-5 text-on-surface font-headline font-bold focus:ring-2 focus:ring-primary transition-all text-sm"
                 >
                   {programs.map((p) => (
-                    <option key={p.id} value={p.title}>{p.title}</option>
+                    <option key={p.id} value={p.id}>{p.title}</option>
                   ))}
                 </select>
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant w-5 h-5 pointer-events-none" />
@@ -74,16 +70,11 @@ export default function AttendanceLoggerView({
             </div>
 
             <div className="flex gap-2">
-              <button 
-                onClick={() => {
-                  setScanNotification({
-                    message: `SUCCESS: Live Attendance logs for "${selectedAttendanceProgram}" saved to Supabase DB.`,
-                    type: 'success'
-                  });
-                }}
+              <button
+                onClick={onOpenYouthScanner}
                 className="bg-primary hover:bg-primary-fixed-dim text-on-primary px-6 py-3.5 rounded-xl font-headline font-black text-xs flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-primary/10 w-full justify-center md:w-auto"
               >
-                <Check className="w-4 h-4" /> SAVE LIVE ATTENDANCE LOGS
+                <ScanLine className="w-4 h-4" /> SCAN RESIDENT QR
               </button>
             </div>
           </div>
@@ -92,7 +83,7 @@ export default function AttendanceLoggerView({
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-surface-container-low p-4 rounded-xl border-l-4 border-primary border border-[#353535]/15">
               <p className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider">Total Registered</p>
-              <p className="text-2xl font-headline font-black text-on-surface mt-1">124</p>
+              <p className="text-2xl font-headline font-black text-on-surface mt-1">{attendanceRecords.length}</p>
             </div>
             <div className="bg-surface-container-low p-4 rounded-xl border-l-4 border-secondary border border-[#353535]/15">
               <p className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider">Current Present</p>
@@ -103,42 +94,32 @@ export default function AttendanceLoggerView({
             <div className="bg-surface-container-low p-4 rounded-xl border-l-4 border-tertiary border border-[#353535]/15">
               <p className="text-[9px] font-black text-on-surface-variant uppercase tracking-wider">Remaining</p>
               <p className="text-2xl font-headline font-black text-tertiary mt-1">
-                {attendanceRecords.filter(r => r.status === 'Absent').length}
+                {attendanceRecords.filter(r => r.status !== 'Present').length}
               </p>
             </div>
           </div>
         </div>
 
-        {/* QR Scanner Simulation Area */}
+        {/* Program QR Check-in Code */}
         <div className="bg-glass border border-outline-variant/10 rounded-xl overflow-hidden flex flex-col items-center justify-center p-6 text-center group relative shadow-2xl">
-          {/* Glowing simulated laser bar */}
-          <div className="relative w-full aspect-square max-w-[180px] mb-4 overflow-hidden border border-outline-variant/10 rounded-lg bg-surface/50">
-            <div className="absolute inset-0 border-2 border-primary/20 rounded-lg"></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <QrCode className="w-20 h-20 text-primary/30 group-hover:scale-105 transition-transform" />
-            </div>
-            {/* Corners */}
-            <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-primary"></div>
-            <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-primary"></div>
-            <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-primary"></div>
-            <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-primary"></div>
-            {/* Laser Scanner Bar animation */}
-            <div className="absolute w-[94%] left-[3%] h-[2px] bg-secondary/80 shadow-[0_0_12px_#ddb8ff] animate-bounce" style={{ top: '48%' }}></div>
-          </div>
-
-          <p className="font-headline font-bold text-sm text-on-surface mb-1">
-            Integrated USB/QR Logger
-          </p>
-          <p className="text-[10px] text-on-surface-variant max-w-[200px]">
-            Place resident QR ID card in front of camera lens or trigger barcode scan.
-          </p>
-          
-          <button 
-            onClick={onSimulateQRScan}
-            className="mt-4 bg-secondary hover:bg-secondary/95 text-on-secondary font-black text-[10px] uppercase tracking-wider py-2.5 px-4 rounded-lg flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
-          >
-            <Zap className="w-3 h-3" /> Simulate Scanner Scan
-          </button>
+          {activeProgram ? (
+            <>
+              <div className="relative w-full aspect-square max-w-[180px] mb-4 overflow-hidden border border-outline-variant/10 rounded-lg bg-white p-3">
+                <QRCodeSVG value={checkInUrl} className="w-full h-full" />
+              </div>
+              <p className="font-headline font-bold text-sm text-on-surface mb-1">
+                Program Check-In QR
+              </p>
+              <p className="text-[10px] text-on-surface-variant max-w-[220px]">
+                Display this code at the venue. Residents logged into their web portal account can scan it with their phone camera to check themselves into "{activeProgram.title}".
+              </p>
+            </>
+          ) : (
+            <>
+              <QrCode className="w-16 h-16 text-primary/30 mb-4" />
+              <p className="text-[11px] text-on-surface-variant">Select a program to generate its check-in QR.</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -148,7 +129,7 @@ export default function AttendanceLoggerView({
           <div>
             <h4 className="font-headline font-bold text-sm text-[#e5e2e1]">Attendance Ledger Log</h4>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <button className="p-2.5 bg-surface-container-highest rounded-lg text-on-surface-variant hover:text-on-surface transition-colors">
               <Filter className="w-4 h-4" />
@@ -171,60 +152,58 @@ export default function AttendanceLoggerView({
               </tr>
             </thead>
             <tbody className="divide-y divide-[#353535]/10">
-              {attendanceRecords.map((rec) => (
-                <tr key={rec.id} className="hover:bg-surface-variant/20 transition-colors group">
-                  <td className="px-6 py-4.5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center font-headline font-bold text-primary text-xs">
-                        {rec.name.split(' ').map(n=>n[0]).join('')}
-                      </div>
-                      <div>
-                        <p className="font-headline font-bold text-sm text-on-surface">{rec.name}</p>
-                        <p className="text-[9px] text-on-surface-variant font-bold">UID: {rec.id}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4.5">
-                    <span className="text-xs font-semibold text-on-surface-variant">{rec.purok}</span>
-                  </td>
-                  <td className="px-6 py-4.5">
-                    <span className="text-xs font-mono font-medium">{rec.timeIn}</span>
-                  </td>
-                  <td className="px-6 py-4.5 text-center">
-                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                      rec.status === 'Present' 
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                        : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                    }`}>
-                      {rec.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4.5 text-right">
-                    {rec.status === 'Absent' ? (
-                      <button 
-                        onClick={() => {
-                          playScanBeep();
-                          setAttendanceRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'Present', timeIn: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } : r));
-                          setScanNotification({ message: `MANUAL CHECK-IN: ${rec.name} marked Present.`, type: 'success' });
-                        }}
-                        className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded-lg transition-colors border border-emerald-500/20"
-                      >
-                        Check In
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={() => {
-                          setAttendanceRecords(prev => prev.map(r => r.id === rec.id ? { ...r, status: 'Absent', timeIn: '--:--' } : r));
-                          setScanNotification({ message: `REMOVED LOG: Checked out ${rec.name}.`, type: 'info' });
-                        }}
-                        className="text-[10px] font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1 rounded-lg transition-colors border border-red-500/20"
-                      >
-                        Check Out
-                      </button>
-                    )}
+              {attendanceRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-10 text-center text-on-surface-variant text-sm font-semibold">
+                    No residents registered yet.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                attendanceRecords.map((rec) => (
+                  <tr key={rec.youthId} className="hover:bg-surface-variant/20 transition-colors group">
+                    <td className="px-6 py-4.5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center font-headline font-bold text-primary text-xs">
+                          {rec.name.split(' ').map(n => n[0]).join('')}
+                        </div>
+                        <p className="font-headline font-bold text-sm text-on-surface">{rec.name}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4.5">
+                      <span className="text-xs font-semibold text-on-surface-variant">{rec.purok}</span>
+                    </td>
+                    <td className="px-6 py-4.5">
+                      <span className="text-xs font-mono font-medium">{rec.timeIn}</span>
+                    </td>
+                    <td className="px-6 py-4.5 text-center">
+                      <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                        rec.status === 'Present'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                      }`}>
+                        {rec.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4.5 text-right">
+                      {rec.status !== 'Present' ? (
+                        <button
+                          onClick={() => onManualCheckIn(rec.youthId, rec.name)}
+                          className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded-lg transition-colors border border-emerald-500/20"
+                        >
+                          Check In
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onManualCheckOut(rec.youthId, rec.name)}
+                          className="text-[10px] font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 px-2.5 py-1 rounded-lg transition-colors border border-red-500/20"
+                        >
+                          Check Out
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

@@ -1,12 +1,10 @@
 import React from 'react';
-import { Search, Bell, HelpCircle, RefreshCw } from 'lucide-react';
+import { Bell, HelpCircle, RefreshCw } from 'lucide-react';
 import * as db from '../../lib/db';
 
 interface TopBarProps {
   activeTab: string;
   isLoading: boolean;
-  searchQuery: string;
-  setSearchQuery: (q: string) => void;
   // Network status
   isOnline: boolean;
   isSyncing: boolean;
@@ -34,8 +32,6 @@ interface TopBarProps {
 export default function TopBar({
   activeTab,
   isLoading,
-  searchQuery,
-  setSearchQuery,
   isOnline,
   isSyncing,
   pendingCount,
@@ -94,20 +90,6 @@ export default function TopBar({
       </div>
       
       <div className="flex items-center gap-6">
-        {/* Global Search */}
-        {activeTab === 'youth-list' && (
-          <div className="relative animate-fade-in">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant w-4 h-4" />
-            <input 
-              type="text" 
-              placeholder="Search database..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-surface-container-highest border-none rounded-lg pl-10 pr-4 py-1.5 text-sm w-64 focus:ring-1 focus:ring-primary/50 transition-all text-on-surface placeholder:text-on-surface-variant/40"
-            />
-          </div>
-        )}
-
       {/* Database Mode Status Pill */}
       {!isOnline ? (
         <div className="hidden lg:flex items-center gap-1.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider select-none animate-pulse">
