@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Filter,
   X,
@@ -9,6 +9,8 @@ import {
   ArrowRight,
   Search,
   SlidersHorizontal,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import * as db from '../../lib/db';
 import { formatYouthName } from 'shared';
@@ -56,35 +58,77 @@ interface YouthListViewProps {
   setSelectedYouthId: (id: string | null) => void;
 }
 
-const multiSelectClass = "bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-1.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer w-full h-24";
-
 interface MultiSelectProps {
   label: string;
+  allLabel: string;
   options: { value: string; label: string }[];
   selected: string[];
   onChange: (v: string[]) => void;
 }
 
-const MultiSelectFilter: React.FC<MultiSelectProps> = ({ label, options, selected, onChange }) => (
-  <div className="flex flex-col gap-1">
-    <div className="flex items-center justify-between">
+const MultiSelectFilter: React.FC<MultiSelectProps> = ({ label, allLabel, options, selected, onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleOption = (value: string) => {
+    onChange(selected.includes(value) ? selected.filter(v => v !== value) : [...selected, value]);
+  };
+
+  const displayText = selected.length === 0
+    ? allLabel
+    : selected.length === 1
+      ? (options.find(o => o.value === selected[0])?.label || selected[0])
+      : `${selected.length} selected`;
+
+  return (
+    <div className="flex flex-col gap-1 relative" ref={containerRef}>
       <label className="text-[10px] uppercase font-bold text-on-surface-variant/80">{label}</label>
-      {selected.length > 0 && (
-        <span className="text-[9px] font-black text-primary">{selected.length} selected</span>
+      <button
+        type="button"
+        onClick={() => setIsOpen(o => !o)}
+        className={`bg-surface-container-high border-none rounded-lg text-xs font-bold text-left py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer flex items-center justify-between gap-2 ${
+          selected.length > 0 ? 'text-primary' : 'text-on-surface'
+        }`}
+      >
+        <span className="truncate">{displayText}</span>
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-on-surface-variant transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 w-full min-w-[180px] max-h-64 overflow-y-auto bg-surface-container-high border border-[#353535]/20 rounded-lg shadow-2xl z-30 py-1">
+          {options.map(o => {
+            const checked = selected.includes(o.value);
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => toggleOption(o.value)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-left hover:bg-surface-variant/20 transition-colors"
+              >
+                <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 border ${
+                  checked ? 'bg-primary border-primary' : 'border-outline-variant/40'
+                }`}>
+                  {checked && <Check className="w-3 h-3 text-on-primary" />}
+                </span>
+                <span className={checked ? 'text-on-surface' : 'text-on-surface-variant'}>{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
-    <select
-      multiple
-      value={selected}
-      onChange={(e) => onChange(Array.from(e.target.selectedOptions).map(o => o.value))}
-      className={multiSelectClass}
-    >
-      {options.map(o => (
-        <option key={o.value} value={o.value}>{o.label}</option>
-      ))}
-    </select>
-  </div>
-);
+  );
+};
 
 const YouthListView: React.FC<YouthListViewProps> = ({
   paginatedProfiles,
@@ -209,6 +253,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 pt-2">
                   <MultiSelectFilter
                     label="Purok Area"
+                    allLabel="All Puroks"
                     selected={purokFilter}
                     onChange={setPurokFilter}
                     options={puroks.map(p => ({ value: p, label: p }))}
@@ -216,6 +261,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Gender"
+                    allLabel="All Genders"
                     selected={genderFilter}
                     onChange={setGenderFilter}
                     options={[
@@ -231,7 +277,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
                     <select
                       value={voterFilter}
                       onChange={(e) => setVoterFilter(e.target.value)}
-                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer h-24"
+                      className="bg-surface-container-high border-none rounded-lg text-xs font-bold text-on-surface py-2.5 px-3 focus:ring-1 focus:ring-primary/50 cursor-pointer"
                     >
                       <option value="All">All Voters</option>
                       <option value="Voter">Voter Only</option>
@@ -241,6 +287,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Civil Status"
+                    allLabel="All Civil Status"
                     selected={civilStatusFilter}
                     onChange={setCivilStatusFilter}
                     options={[
@@ -252,6 +299,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Employment"
+                    allLabel="All Employment"
                     selected={workStatusFilter}
                     onChange={setWorkStatusFilter}
                     options={[
@@ -265,6 +313,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Classification"
+                    allLabel="All Classes"
                     selected={classificationFilter}
                     onChange={setClassificationFilter}
                     options={[
@@ -277,6 +326,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Education Level"
+                    allLabel="All Education"
                     selected={educationFilter}
                     onChange={setEducationFilter}
                     options={[
@@ -296,6 +346,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Operational"
+                    allLabel="All Status"
                     selected={statusFilter}
                     onChange={setStatusFilter}
                     options={[
@@ -307,6 +358,7 @@ const YouthListView: React.FC<YouthListViewProps> = ({
 
                   <MultiSelectFilter
                     label="Skills"
+                    allLabel="All Skills"
                     selected={skillsFilter}
                     onChange={setSkillsFilter}
                     options={skillSuggestions.map(s => ({ value: s, label: s }))}
